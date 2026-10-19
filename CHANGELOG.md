@@ -5,6 +5,10 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `PRIVACY.md` and `docs/STORE_LISTING.md` for the Chrome Web Store and Edge Add-ons listings.
+- Optional `store-publish` release job that uploads the zip to both stores after maintainer approval.
+
 ## [0.3.0] - 2026-10-19
 
 ### Added

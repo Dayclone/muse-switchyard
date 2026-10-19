@@ -32,3 +32,50 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" "switchyard-${GITHUB_REF_NAME}.zip" \
             --title "Switchyard ${GITHUB_REF_NAME}" --generate-notes
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-zip
+          path: switchyard-*.zip
+          if-no-files-found: error
+
+  # Uploads the same zip to the extension stores. Needs a maintainer to approve the
+  # "store-publish" environment, and each store step is skipped until its secrets exist.
+  # The first submission of each listing is manual; this only publishes updates.
+  store-publish:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: store-publish
+    permissions:
+      contents: read
+    env:
+      CHROME_EXTENSION_ID: ${{ vars.CHROME_EXTENSION_ID }}
+      CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+      CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+      CHROME_REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+      EDGE_PRODUCT_ID: ${{ vars.EDGE_PRODUCT_ID }}
+      EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+      EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: extension-zip
+      - name: Locate zip
+        run: echo "ZIP=$(ls switchyard-*.zip | head -n1)" >> "$GITHUB_ENV"
+      - name: Chrome Web Store
+        if: env.CHROME_EXTENSION_ID != '' && env.CHROME_CLIENT_ID != '' && env.CHROME_REFRESH_TOKEN != ''
+        uses: mnao305/chrome-webstore-upload-action@v1
+        with:
+          zip-path: ${{ env.ZIP }}
+          extension-id: ${{ env.CHROME_EXTENSION_ID }}
+          client-id: ${{ env.CHROME_CLIENT_ID }}
+          client-secret: ${{ env.CHROME_CLIENT_SECRET }}
+          refresh-token: ${{ env.CHROME_REFRESH_TOKEN }}
+          publish: true
+      - name: Microsoft Edge Add-ons
+        if: env.EDGE_PRODUCT_ID != '' && env.EDGE_CLIENT_ID != '' && env.EDGE_API_KEY != ''
+        uses: wdzeng/edge-addon@v2
+        with:
+          product-id: ${{ env.EDGE_PRODUCT_ID }}
+          zip-path: ${{ env.ZIP }}
+          client-id: ${{ env.EDGE_CLIENT_ID }}
+          api-key: ${{ env.EDGE_API_KEY }}
