@@ -1,6 +1,6 @@
 {
   "name": "muse-switchyard",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "type": "module",
   "description": "Encrypted multi-account session switcher and opt-in auto-approve for muse.ai (unofficial)",

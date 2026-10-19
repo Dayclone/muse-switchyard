@@ -1,0 +1,55 @@
+name: Dependabot auto-merge
+
+# Enables auto-merge on Dependabot PRs that are minor or patch updates; GitHub
+# then merges them once required checks pass. Major updates and any
+# non-Dependabot PRs are left for manual review.
+#
+# Uses pull_request (not pull_request_target) and never checks out or runs PR
+# code. For Dependabot-triggered pull_request runs, GITHUB_TOKEN is read/write
+# limited by the permissions block below, and no repo secrets are exposed
+# (only Dependabot secrets).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    runs-on: ubuntu-24.04
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.repository == 'Dayclone/muse-switchyard'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # OPTIONAL: approve the PR, for branch protection that requires a review.
+      # Off by default. Enable by setting the repository variable
+      # DEPENDABOT_AUTO_APPROVE to 'true' AND turning on the repo setting
+      # Settings > Actions > General > "Allow GitHub Actions to create and
+      # approve pull requests".
+      - name: Approve minor/patch update (optional)
+        if: >-
+          (steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-patch') &&
+          vars.DEPENDABOT_AUTO_APPROVE == 'true'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr review --approve "$PR_URL"
+
+      - name: Enable auto-merge for minor/patch update
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-patch'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge --auto --merge "$PR_URL"

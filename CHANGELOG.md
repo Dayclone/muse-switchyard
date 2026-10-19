@@ -5,6 +5,15 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-19
+
+### Added
+- Release workflow can be run from GitHub: `gh workflow run Release -f version=x.y.z`. It checks out `main`, refuses to run unless `manifest.json` matches the input and neither the tag nor a Release already exists, runs the tests, builds the same zip and publishes the Release (creating the tag on `main`). Pushing a `vX.Y.Z` tag still works as before.
+- `dependabot-automerge.yml`: Dependabot minor and patch updates get auto-merge enabled (merges once required checks and reviews pass). Major updates and non-Dependabot PRs stay manual. An optional auto-approve step runs only when the repository variable `DEPENDABOT_AUTO_APPROVE` is `true`.
+
+### Changed
+- CI and workflows use `actions/checkout@v7`, `actions/setup-node@v7` and `actions/labeler@v7`.
+
 ## [0.4.1] - 2026-10-19
 
 ### Fixed
