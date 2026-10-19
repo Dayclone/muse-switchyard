@@ -57,8 +57,9 @@ All tests must pass before you open a PR. There is no build step: the repo folde
 
 Semantic versioning, one source of truth checked by a test: `package.json` and `manifest.json` must
 match, and `CHANGELOG.md` must have a section for that version. Patch = fixes, minor = features or
-behaviour changes, major = breaking changes to stored data or settings. Releases are tags `vX.Y.Z`;
-CI builds and attaches the extension zip.
+behaviour changes, major = breaking changes to stored data or settings. Releases are tags `vX.Y.Z`,
+created by the Release workflow (dispatched with a `version` input) or by a pushed tag; CI builds
+and attaches the extension zip. Agents must not tag or release.
 
 ## Gotchas
 
