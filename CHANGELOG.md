@@ -5,6 +5,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- CONTRIBUTING and AGENTS now document releasing from GitHub Actions and the Dependabot auto-merge
+  setup.
+
 ## [0.4.2] - 2026-10-19
 
 ### Added

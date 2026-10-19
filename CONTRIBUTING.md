@@ -40,5 +40,22 @@ Be kind and assume good faith. Harassment gets you removed. Keep discussion abou
 ## Releases (maintainer)
 
 1. `npm run bump -- minor` (or `patch` / `major`), review the diff, merge via PR.
-2. Tag the merge commit `vX.Y.Z` and push the tag. CI tests, builds `switchyard-vX.Y.Z.zip`, and
-   publishes a GitHub Release with it.
+2. After the bump PR is merged, run `gh workflow run Release -f version=X.Y.Z` (no leading `v`), or
+   use Actions > Release > Run workflow. The workflow checks out `main` and fails if
+   `manifest.json` version does not equal the input, or if tag `vX.Y.Z` or a GitHub Release already
+   exists. Otherwise it runs `npm ci` and `npm test`, builds `switchyard-vX.Y.Z.zip`, creates the
+   tag on `main`, and publishes a GitHub Release with generated notes.
+
+Alternative: tag the merge commit `vX.Y.Z` and push the tag. CI tests, checks that the tag matches
+`manifest.json`, builds the zip, and publishes the Release.
+
+### Dependabot
+
+`.github/workflows/dependabot-automerge.yml` enables auto-merge (merge commit) for Dependabot
+semver-minor and semver-patch updates only. It approves them only when the repo variable
+`DEPENDABOT_AUTO_APPROVE` is `true`. This needs the repo setting "Allow GitHub Actions to create
+and approve pull requests", and "Allow auto-merge" must be on. Major updates and human PRs are
+merged manually.
+
+jsdom major updates are ignored for now: jsdom 30 needs a newer Node than 20, which this repo still
+supports.
