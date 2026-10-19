@@ -1,34 +1,89 @@
 name: Release
 
-# Push a tag like v0.3.1 (after merging the version bump PR) to publish a release.
+# Two ways to publish a release:
+#   1. Tag push: merge the version bump PR, then push a tag like v0.3.1.
+#   2. Manual dispatch (no tag needed; the workflow creates it on main):
+#        gh workflow run Release -f version=0.3.1
+# Both paths run the tests, check the manifest version, and publish
+# switchyard-vX.Y.Z.zip. Triggers are only tag pushes and manual dispatch,
+# so no pull-request code ever runs here.
 on:
   push:
     tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release as x.y.z (no leading "v"), e.g. 0.3.1'
+        required: true
+        type: string
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.ref }}
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
+      - name: Resolve and validate tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "version input must look like x.y.z (no leading v), got: $VERSION"
+              exit 1
+            fi
+            TAG="v${VERSION}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+          echo "Releasing ${TAG}"
       - run: npm ci
       - run: npm test
       - name: Tag must match the manifest version
         run: |
           V=$(node -p "require('./manifest.json').version")
-          if [ "v$V" != "${GITHUB_REF_NAME}" ]; then echo "tag ${GITHUB_REF_NAME} != manifest v$V"; exit 1; fi
-      - name: Build extension zip
-        run: |
-          zip -r "switchyard-${GITHUB_REF_NAME}.zip" manifest.json background.js popup.html popup.js popup.css content lib icons LICENSE README.md
-      - name: Publish release
+          if [ "v$V" != "${TAG}" ]; then echo "tag ${TAG} != manifest v$V"; exit 1; fi
+      - name: Ensure tag and release do not already exist (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" "switchyard-${GITHUB_REF_NAME}.zip" \
-            --title "Switchyard ${GITHUB_REF_NAME}" --generate-notes
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "tag ${TAG} already exists"
+            exit 1
+          fi
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "release ${TAG} already exists"
+            exit 1
+          fi
+      - name: Build extension zip
+        run: |
+          zip -r "switchyard-${TAG}.zip" manifest.json background.js popup.html popup.js popup.css content lib icons LICENSE README.md
+      - name: Publish release (tag push)
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${TAG}" "switchyard-${TAG}.zip" \
+            --title "Switchyard ${TAG}" --generate-notes
+      - name: Publish release (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${TAG}" "switchyard-${TAG}.zip" \
+            --target main --title "Switchyard ${TAG}" --generate-notes
