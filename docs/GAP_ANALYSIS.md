@@ -53,3 +53,34 @@ Status legend: **Fixed** (code + test), **Mitigated** (reduced, residual risk no
 | O10 | Behaviour verified against a **fake** `chrome` API, not a real browser. | Open | The mock mirrors documented semantics; real-Chrome differences are the main residual risk. Items the red team could not settle are listed in `RED_TEAM.md`. |
 | O11 | Considered and rejected: keeping a "previous vault" copy for corruption recovery. | Rejected | It would retain deleted accounts and, after a passphrase change, a copy under the **old** passphrase. `storage.set` is atomic; the encrypted export is the backup. |
 | O12 | Considered and rejected: account-identity probing to detect "someone else logged in". | Rejected | Needs site-specific knowledge; the freeze guard is the generic substitute. |
+
+## D. Closed in 0.4.0 (auto-approve hardening)
+
+All proven in Node against jsdom fixtures and the fake `chrome.*` API only. **None of it has been run in a real browser.**
+
+| # | Gap | What changed | Tests |
+|---|-----|--------------|-------|
+| H1 | If Muse changed its markup, auto-approve would silently do nothing. | Watchdog: no known control (Approvals tab, pane close button, avatar, review bar, any card) for 10 min with auto-approve on sends `approve:stale` (rate limited per tab in both content script and background). Background logs `stale`, shows `WARN` on the badge and a Settings banner until an approved/skipped log or `approve:controls` from that tab, tab close, or auto-approve off. No page text is sent or stored. | approve.test (7), integration (2), popup (1) |
+| H2 | `approved` only meant "clicked". | Follow-up `confirmed` (card gone ~3 s later) or `stuck` (still there after the retry limit). Popup shows them distinctly. | approve.test (4), popup (1) |
+| H3 | A card with an unanswered question was approved anyway. | `needs-input`: unsatisfied visible select/radio/checkbox/text/textarea/ARIA/`aria-required` hold the card (once-per-card log); the "More allow options" button is ignored. Does not change the opt-in `holdRisky` rule. | approve.test (14) |
+| H4 | The loop would keep visiting an expired account, and clicking nothing. | `needs-login`: sign-in page URL on a muse.ai tab, or the existing `looksLoggedOut` / `lostCredentials` guards, or a switch that rolls back, flags the account (session storage), skips it until the user re-saves it with ↻, and tags it in the popup. Nothing is ever typed or submitted. | integration (4), popup (1) |
+| H5 | One stalled account could hold up the loop. | `loop-timeout`: caps on the switch (20 s), dwell (150 s), vanished tab (15 s) and the whole round (45 min); the log names the account and reason. Lock mid-loop ends the loop cleanly. | integration (6) |
+| H6 | A page-side message could log any decision string. | `approve:log` decisions are allow-listed; `stale`, `needs-login`, `loop-timeout` are background-only. | integration (1) |
+
+### Remaining gaps after 0.4.0
+
+- **Real browser: unverified.** Selectors for the watchdog controls, the needs-input detection, the 3 s card-gone check, and the
+  `/login` / `/sign-in` URL match are guesses from the fixtures and earlier real runs. None was checked against live Muse or a real
+  expired session. `tabs.query` returning `url` for host-permitted tabs, and `tabs.onRemoved`, are assumed from docs.
+- **Needs-input can over-hold.** Every visible empty field counts, including optional ones (an unticked checkbox). It fails safe (no click)
+  but a harmless card may need a manual click. Real Muse cards have not been surveyed for such fields.
+- **Watchdog false positives.** Any muse.ai tab with none of the known controls (login page, marketing page, a long-idle background tab
+  whose timers are throttled) will raise the warning after 10 minutes while auto-approve is on.
+- **Click verification is element-based.** If Muse re-renders the next card into the same DOM node, the check cannot tell and may
+  report `stuck` or `confirmed` wrongly. Retries still stop at 3 clicks.
+- **needsLogin lives in session storage**, so it is forgotten at browser restart; the next loop re-detects it at the cost of one dwell.
+  The login-page check reads the tab URL once, when leaving an account, so a sign-in redirect that happens later is caught a round late.
+- **Whole-loop cap has no resume.** When the 45-minute cap ends a round, the next round starts again from the first account, so very
+  late accounts in a very long list could be starved. A hung switch is abandoned but the stuck vault operation behind it is not cancelled.
+- **Rollback flagged as needs-login.** A switch whose cookies all fail to restore is treated as an expired session; a permissions or
+  browser-side failure would be mislabelled the same way.
