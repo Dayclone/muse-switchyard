@@ -672,6 +672,285 @@ await test('the loop stops when the vault locks', async () => {
   assert.equal(M.state.session.loopState, undefined);
 });
 
+/* ---------- 0.4.0 hardening: watchdog, needs-login, loop caps ---------- */
+
+const SITE2 = { ...SITE, tab: { id: 2 } };
+const decisions = async () => (await ok('approveLog')).log.map((e) => `${e.decision}:${e.account || ''}`);
+const logOf = async (decision) => (await ok('approveLog')).log.filter((e) => e.decision === decision);
+const MIN = 60000;
+
+await test('watchdog: approve:stale is validated, logged with our own text, rate limited per tab, and sets a badge warning', async () => {
+  await ok('setup', { pass: PASS });
+  await M.tick(100);
+  await M.send({ type: 'approve:stale' }, SITE);
+  await M.tick(80);
+  assert.equal((await ok('approveLog')).log.length, 0, 'ignored while auto-approve is off');
+  await ok('setApprove', { approve: { enabled: true, all: true } });
+  await M.send({ type: 'approve:stale', text: 'page text must never be stored', entry: { title: 'SECRET' } }, SITE);
+  await M.tick(120);
+  const [e, ...rest] = (await ok('approveLog')).log;
+  assert.equal(rest.length, 0);
+  assert.equal(e.decision, 'stale');
+  assert.match(e.title, /layout may have changed; auto-approve could not find its controls/);
+  assert.ok(!JSON.stringify(M.state.local).includes('SECRET') && !JSON.stringify(M.state.local).includes('page text must'));
+  assert.equal(M.state.badge.text, 'WARN');
+  assert.equal((await ok('getApprove')).stale, true);
+  await M.send({ type: 'approve:stale' }, SITE); await M.tick(60);
+  assert.equal((await logOf('stale')).length, 1, 'same tab, within 30 minutes: ignored');
+  await M.send({ type: 'approve:stale' }, SITE2); await M.tick(80);
+  assert.equal((await logOf('stale')).length, 2, 'another tab is tracked separately');
+  M.state.now += 31 * MIN;
+  await M.send({ type: 'approve:stale' }, SITE); await M.tick(80);
+  assert.equal((await logOf('stale')).length, 3, 'allowed again after 30 minutes');
+  for (const bad of [{ ...SITE, url: 'https://evil.example/' }, { ...SITE, url: 'https://muse.ai.evil.example/' }, { ...SITE, id: 'other-ext' }, { id: 'test-extension-id', url: 'https://muse.ai/' }]) {
+    await M.send({ type: 'approve:stale' }, { ...bad, tab: bad.tab }); 
+  }
+  M.state.now += 31 * MIN;
+  const before = (await logOf('stale')).length;
+  await M.send({ type: 'approve:stale' }, { ...SITE, url: 'https://evil.example/' });
+  await M.send({ type: 'approve:stale' }, { id: 'test-extension-id', url: 'https://muse.ai/' }); // no tab
+  await M.tick(80);
+  assert.equal((await logOf('stale')).length, before, 'only muse.ai tabs of this extension are believed');
+});
+
+await test('watchdog: the warning clears on approved/skipped logs or a controls report from that tab, on tab close, and when auto-approve is turned off', async () => {
+  await ok('setup', { pass: PASS });
+  await ok('setApprove', { approve: { enabled: true, all: true } });
+  const warn = async () => { await M.tick(100); return M.state.badge.text === 'WARN'; };
+  const stale = (from = SITE) => { M.state.now += 31 * MIN; return M.send({ type: 'approve:stale' }, from); };
+  await stale(); assert.ok(await warn());
+  await M.send({ type: 'approve:log', entry: { decision: 'held', title: 'x' } }, SITE);
+  assert.ok(await warn(), 'a held card is not proof that the controls work');
+  await M.send({ type: 'approve:log', entry: { decision: 'approved', title: 'x' } }, SITE2);
+  assert.ok(await warn(), 'another tab cannot clear this tab\'s warning');
+  await M.send({ type: 'approve:log', entry: { decision: 'approved', title: 'x' } }, SITE);
+  assert.ok(!(await warn()), 'approved clears it');
+  await stale(); assert.ok(await warn());
+  await M.send({ type: 'approve:log', entry: { decision: 'skipped', title: 'x' } }, SITE);
+  assert.ok(!(await warn()), 'skipped clears it');
+  await stale(); assert.ok(await warn());
+  await M.send({ type: 'approve:controls' }, SITE);
+  assert.ok(!(await warn()), 'controls visible again clears it');
+  assert.equal((await ok('getApprove')).stale, false);
+  await stale(); assert.ok(await warn());
+  M.removeTab(1);
+  assert.ok(!(await warn()), 'closing the tab clears it');
+  await stale(); assert.ok(await warn());
+  await ok('setApprove', { approve: { enabled: false } });
+  assert.ok(!(await warn()), 'turning auto-approve off clears it');
+});
+
+await test('the page cannot forge the decisions the background owns, and unknown decisions are dropped', async () => {
+  await ok('setApprove', { approve: { enabled: true } });
+  for (const d of ['stale', 'needs-login', 'loop-timeout', 'whatever']) await M.send({ type: 'approve:log', entry: { decision: d, title: 'forged' } }, SITE);
+  for (const d of ['confirmed', 'stuck', 'needs-input']) await M.send({ type: 'approve:log', entry: { decision: d, title: 'ok' } }, SITE);
+  await M.tick(120);
+  assert.deepEqual((await ok('approveLog')).log.map((e) => e.decision).sort(), ['confirmed', 'needs-input', 'stuck']);
+  assert.equal(M.state.badge.text === 'WARN', false);
+});
+
+/** vault + A, B, C saved (C active) + one open muse.ai tab; the loop visits A, B, C in name order. */
+async function threeAccounts() {
+  await ok('setup', { pass: PASS });
+  const tab = M.addTab({ url: 'https://muse.ai/app', local: {} });
+  for (const who of ['A', 'B', 'C']) {
+    await M.site.login(who);
+    await ok('saveCurrent', { name: who });
+    await ok('signOut');
+  }
+  await M.site.login('C');
+  await ok('switch', { id: (profileByName(await ok('status'), 'C')).id });
+  const st = await ok('status');
+  return { tab, A: profileByName(st, 'A'), B: profileByName(st, 'B'), C: profileByName(st, 'C') };
+}
+const tickLoop = async (adv = 0) => { M.state.now += adv; M.fireAlarm('approveTick'); await M.tick(220); };
+/** the page reports it is done, after the minimum dwell */
+const settle = async () => { M.state.now += 30000; await M.send({ type: 'approve:idle' }, SITE); M.state.now += 1; await M.tick(30); };
+const activeName = async () => { const st = await ok('status'); return (st.profiles.find((p) => p.id === st.activeId) || {}).name; };
+
+await test('needs-login: an account that lands on a sign-in page is flagged, skipped now and in later loops, and re-saving clears it', async () => {
+  const { tab, B } = await threeAccounts();
+  await ok('setApprove', { approve: { enabled: true, all: true, loop: true, loopMinutes: 10 } });
+  await tickLoop();
+  assert.equal(await activeName(), 'A');
+  await settle(); await tickLoop();
+  assert.equal(await activeName(), 'B');
+  tab.url = 'https://muse.ai/login?next=/app'; // Muse bounced the expired session to its sign-in page
+  await settle(); await tickLoop();
+  assert.equal(await activeName(), 'C', 'the loop moved on');
+  assert.ok(M.state.session.needsLogin[B.id]);
+  assert.deepEqual((await logOf('needs-login')).map((e) => e.account), ['B'], 'logged once, naming the account');
+  assert.ok((await ok('status')).profiles.find((p) => p.id === B.id).needsLogin, 'the popup gets the flag');
+  tab.url = 'https://muse.ai/app';
+  await settle(); await tickLoop(); // C done: loop ends
+  assert.equal(M.state.session.loopState, undefined);
+  // next loop: A, then straight to C
+  await tickLoop(11 * MIN);
+  assert.equal(await activeName(), 'A');
+  await settle(); await tickLoop();
+  assert.equal(await activeName(), 'C', 'B is skipped');
+  assert.equal((await logOf('needs-login')).length, 1, 'not logged again');
+  await settle(); await tickLoop();
+  // the user signs in again and re-saves
+  await ok('switch', { id: B.id });
+  await M.site.login('B');
+  await ok('refresh', { id: B.id });
+  assert.equal(M.state.session.needsLogin, undefined, 'flag cleared by the re-save');
+  assert.equal((await ok('status')).profiles.find((p) => p.id === B.id).needsLogin, false);
+  await tickLoop(11 * MIN);
+  assert.equal(await activeName(), 'A');
+  await settle(); await tickLoop();
+  assert.equal(await activeName(), 'B', 'B is back in the rotation');
+});
+
+await test('needs-login: cookies wiped by the server during the dwell (the existing logged-out guard) also flag the account', async () => {
+  const { B } = await threeAccounts();
+  await ok('setApprove', { approve: { enabled: true, all: true, loop: true } });
+  await tickLoop(); await settle(); await tickLoop();
+  assert.equal(await activeName(), 'B');
+  M.site.logout();
+  await settle(); await tickLoop();
+  assert.equal(await activeName(), 'C');
+  assert.ok(M.state.session.needsLogin[B.id]);
+  assert.equal((await logOf('needs-login')).length, 1);
+});
+
+await test('needs-login: a saved session whose cookies cannot be restored at all is flagged and the loop carries on', async () => {
+  const { B } = await threeAccounts();
+  await ok('setApprove', { approve: { enabled: true, all: true, loop: true } });
+  const set = chrome.cookies.set;
+  chrome.cookies.set = async (d) => (/-B$/.test(d.value) ? null : set(d));
+  try {
+    await tickLoop(); await settle(); await tickLoop();
+    assert.ok(M.state.session.needsLogin[B.id], 'rolled back = nothing usable: flagged');
+    assert.equal(await activeName(), 'A', 'the browser was put back');
+    await tickLoop();
+    assert.equal(await activeName(), 'C', 'next tick goes straight on, no dwell on a dead account');
+  } finally { chrome.cookies.set = set; }
+});
+
+await test('needs-login: the flag is never set by a healthy loop, and nothing is typed or submitted', async () => {
+  await threeAccounts();
+  await ok('setApprove', { approve: { enabled: true, all: true, loop: true } });
+  const scripts = [];
+  const exec = chrome.scripting.executeScript;
+  chrome.scripting.executeScript = async (o) => { scripts.push(o.func.toString()); return exec(o); };
+  try {
+    for (let i = 0; i < 4; i++) { await tickLoop(); await settle(); }
+  } finally { chrome.scripting.executeScript = exec; }
+  assert.equal(M.state.session.needsLogin, undefined);
+  assert.deepEqual(await logOf('needs-login'), []);
+  assert.ok(scripts.every((f) => !/\.submit\(|\.click\(|\.value\s*=|dispatchEvent/.test(f)), 'only storage capture/restore scripts ran');
+});
+
+await test('loop robustness: a closed tab mid-dwell is skipped quickly with a loop-timeout entry and later accounts still run', async () => {
+  await threeAccounts();
+  await ok('setApprove', { approve: { enabled: true, all: true, loop: true } });
+  await tickLoop();
+  assert.equal(await activeName(), 'A');
+  M.state.tabs.length = 0; // the user closed every muse.ai tab
+  const t0 = M.state.now;
+  await tickLoop(20000);
+  assert.equal(await activeName(), 'B', 'moved on long before the 150 s cap');
+  assert.ok(M.state.now - t0 < 60000);
+  const [t] = await logOf('loop-timeout');
+  assert.equal(t.account, 'A');
+  assert.match(t.title, /tab was closed/);
+  await tickLoop(20000);
+  assert.equal(await activeName(), 'C');
+  assert.deepEqual((await logOf('loop-timeout')).map((e) => e.account).sort(), ['A', 'B']);
+  await tickLoop(20000);
+  assert.equal(M.state.session.loopState, undefined, 'the round completes');
+});
+
+await test('loop robustness: an account whose page never sends approve:idle is skipped at the per-account cap, not before', async () => {
+  await threeAccounts();
+  await ok('setApprove', { approve: { enabled: true, all: true, loop: true } });
+  await tickLoop();
+  assert.equal(await activeName(), 'A');
+  await tickLoop(100000);
+  assert.equal(await activeName(), 'A', 'still within the cap');
+  assert.deepEqual(await logOf('loop-timeout'), []);
+  await tickLoop(60000);
+  assert.equal(await activeName(), 'B');
+  const [t] = await logOf('loop-timeout');
+  assert.equal(t.account, 'A');
+  assert.match(t.title, /never reported/);
+  await tickLoop(160000);
+  assert.equal(await activeName(), 'C', 'one stalled account does not hold up the rest');
+  await tickLoop(160000);
+  assert.equal(M.state.session.loopState, undefined, 'loop ends');
+  assert.ok(M.state.session.lastLoopEnd);
+});
+
+await test('loop robustness: the whole loop has a cap and then rests', async () => {
+  await threeAccounts();
+  await ok('setApprove', { approve: { enabled: true, all: true, loop: true } });
+  await tickLoop();
+  assert.ok(M.state.session.loopState);
+  await tickLoop(46 * MIN); // e.g. the machine slept mid-loop
+  assert.equal(M.state.session.loopState, undefined);
+  assert.ok(M.state.session.lastLoopEnd);
+  const [t] = await logOf('loop-timeout');
+  assert.match(t.title, /Account loop stopped after 45 minutes/);
+  await tickLoop(MIN);
+  assert.equal(M.state.session.loopState, undefined, 'rests until the interval has passed');
+});
+
+await test('loop robustness: a switch that hangs is abandoned at its cap with a loop-timeout entry', async () => {
+  await threeAccounts();
+  await ok('setApprove', { approve: { enabled: true, all: true, loop: true } });
+  const holds = [];
+  const reload = chrome.tabs.reload;
+  chrome.tabs.reload = () => new Promise((res) => holds.push(res)); // a tab call that never answers
+  const st = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms, ...a) => st(fn, ms === 20000 ? 40 : ms, ...a); // shrink the 20 s switch cap
+  try {
+    await tickLoop();
+    await M.tick(150);
+    const [t] = await logOf('loop-timeout');
+    assert.ok(t, 'logged');
+    assert.match(t.title, /switching did not finish/);
+    assert.ok(M.state.session.loopState, 'the loop state moved on instead of hanging in loopTick');
+  } finally {
+    globalThis.setTimeout = st;
+    chrome.tabs.reload = reload;
+    for (let i = 0; i < 6; i++) { holds.splice(0).forEach((r) => r()); await M.tick(120); }
+  }
+});
+
+await test('loop robustness: locking the vault mid-dwell stops the loop; a fresh unlock starts a clean round', async () => {
+  await threeAccounts();
+  await ok('setApprove', { approve: { enabled: true, all: true, loop: true } });
+  await tickLoop();
+  assert.ok(M.state.session.loopState);
+  await ok('lock');
+  const active = M.jarGet('__Secure-sid')[0]?.value;
+  await tickLoop(200000);
+  assert.equal(M.state.session.loopState, undefined);
+  assert.equal(M.jarGet('__Secure-sid')[0]?.value, active, 'nothing was switched while locked');
+  await ok('unlock', { pass: PASS });
+  await tickLoop();
+  assert.ok(M.state.session.loopState, 'a new round starts after unlock');
+});
+
+await test('loop robustness: the vault locking between the tick reading its state and switching ends the loop cleanly', async () => {
+  await threeAccounts();
+  await ok('setApprove', { approve: { enabled: true, all: true, loop: true } });
+  await tickLoop();
+  const sid0 = sid();
+  const get = chrome.storage.session.get;
+  chrome.storage.session.get = async (keys) => {
+    const r = await get(keys);
+    if (Array.isArray(keys) && keys.includes('loopState')) delete M.state.session.k; // locked right after the check
+    return r;
+  };
+  try { await tickLoop(200000); } finally { chrome.storage.session.get = get; }
+  assert.equal(M.state.session.loopState, undefined);
+  assert.equal(sid(), sid0, 'no account switch happened');
+  assert.ok(!(await decisions()).some((d) => d.startsWith('needs-login')), 'a lock is not an expired account');
+});
+
 await test('defaults: session cookies are not made persistent unless asked', async () => {
   await ok('setup', { pass: PASS });
   const st = await ok('status');
