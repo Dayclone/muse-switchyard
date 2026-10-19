@@ -505,31 +505,142 @@ function appendApproveLog(entry) {
   return logChain;
 }
 
+// What the content script may put in the log. Decisions the background owns (stale, needs-login,
+// loop-timeout) are not in this list, so a page-side message can never forge them.
+const PAGE_DECISIONS = new Set(['approved', 'retry', 'skipped', 'held', 'rate-limited', 'learn', 'confirmed', 'stuck', 'needs-input']);
+const STALE_RESEND_MS = 30 * 60000;
+const STALE_TEXT = "Muse's page layout may have changed; auto-approve could not find its controls";
+
+// Tabs that reported stale controls and have not recovered: {tabId: time}. Drives the toolbar warning.
+let staleChain = Promise.resolve();
+function staleUpdate(fn) {
+  staleChain = staleChain.then(async () => {
+    const { staleWarn = {} } = await chrome.storage.session.get('staleWarn');
+    const next = fn({ ...staleWarn });
+    if (next) await chrome.storage.session.set({ staleWarn: next });
+    else await chrome.storage.session.remove('staleWarn');
+    updateBadge();
+  }).catch(() => {});
+  return staleChain;
+}
+const clearAllStale = () => staleUpdate(() => null);
+const clearStale = (tabId) => staleUpdate((w) => {
+  if (!(tabId in w)) return w;
+  delete w[tabId];
+  return Object.keys(w).length ? w : null;
+});
+
 // Messages from the muse.ai content script. It can only report; it can never change settings or switch accounts.
 chrome.runtime.onMessage.addListener((msg, sender) => {
   const fromSite = sender.id === chrome.runtime.id && sender.tab && typeof sender.url === 'string' &&
     /^https:\/\/([a-z0-9-]+\.)*muse\.ai\//.test(sender.url);
   if (!fromSite || !msg || typeof msg.type !== 'string') return false;
+  const tabId = sender.tab.id;
   if (msg.type === 'approve:log' && msg.entry && typeof msg.entry === 'object') {
     (async () => {
       const a = await getApprove();
       if (!a.enabled) return;
+      const decision = String(msg.entry.decision || '');
+      if (!PAGE_DECISIONS.has(decision)) return;
       const { activeName } = await chrome.storage.session.get('activeName');
       await appendApproveLog({ ...msg.entry, account: activeName });
+      if (decision === 'approved' || decision === 'skipped') await clearStale(tabId);
     })();
   } else if (msg.type === 'approve:idle') {
     chrome.storage.session.set({ approveIdleAt: Date.now() }).catch(() => {});
+  } else if (msg.type === 'approve:stale') {
+    // Carries no text: the explanation below is ours. At most one per tab per 30 minutes.
+    (async () => {
+      const a = await getApprove();
+      if (!a.enabled) return;
+      const { staleAt = {}, activeName } = await chrome.storage.session.get(['staleAt', 'activeName']);
+      const now = Date.now();
+      if (now - (staleAt[tabId] || 0) < STALE_RESEND_MS) return;
+      const kept = Object.fromEntries(Object.entries(staleAt).filter(([, t]) => now - t < STALE_RESEND_MS).slice(-50));
+      await chrome.storage.session.set({ staleAt: { ...kept, [tabId]: now } });
+      await staleUpdate((w) => ({ ...w, [tabId]: now }));
+      await appendApproveLog({ decision: 'stale', title: STALE_TEXT, account: activeName });
+    })();
+  } else if (msg.type === 'approve:controls') {
+    clearStale(tabId);
   }
   return false;
 });
+if (chrome.tabs && chrome.tabs.onRemoved) chrome.tabs.onRemoved.addListener((id) => { clearStale(id); });
 
 /**
  * Account loop, as a tick-driven state machine (the service worker can be evicted between ticks):
  * switch to an account, stay until its approvals are cleared (page reports idle) or a time cap,
  * then move on. Runs only while the vault is unlocked.
+ *
+ * Caps, so one stalled account can never block the rest: the dwell cap per account, a cap on the switch
+ * itself, a shorter one when the muse.ai tab vanished, and a cap on the whole loop. Each skip is logged
+ * as 'loop-timeout'.
  */
 const DWELL_MIN_MS = 25000;
-const DWELL_MAX_MS = 150000;
+const DWELL_MAX_MS = 150000; // per-account hard cap
+const SWITCH_MAX_MS = 20000; // the switch itself (tab calls can hang)
+const TAB_GONE_MS = 15000; // no muse.ai tab this long into a dwell: the page cannot report anything
+const LOOP_MAX_MS = 45 * 60000; // whole-loop cap
+
+/* Accounts whose saved session expired: {id: time}. Session storage, so it is gone after a browser
+   restart (the next loop simply re-detects it). Cleared when the user re-saves the account. */
+let needsLoginChain = Promise.resolve();
+function needsLoginUpdate(fn) {
+  needsLoginChain = needsLoginChain.then(async () => {
+    const { needsLogin = {} } = await chrome.storage.session.get('needsLogin');
+    const next = fn({ ...needsLogin });
+    if (Object.keys(next).length) await chrome.storage.session.set({ needsLogin: next });
+    else await chrome.storage.session.remove('needsLogin');
+  }).catch(() => {});
+  return needsLoginChain;
+}
+const getNeedsLogin = async () => (await chrome.storage.session.get('needsLogin')).needsLogin || {};
+const clearNeedsLogin = (id) => needsLoginUpdate((n) => { delete n[id]; return n; });
+
+// A tab sitting on a sign-in page. Reads the address only; nothing is ever typed or submitted.
+const LOGIN_PATH = /(^|\/)(log-?in|sign-?in)(\/|$)/i;
+async function onLoginPage(domains) {
+  for (const tab of await siteTabs(domains)) {
+    try { if (LOGIN_PATH.test(new URL(tab.url).pathname)) return true; } catch { /* odd url */ }
+  }
+  return false;
+}
+
+/**
+ * Does the account we are on look signed out? Reuses the cookie guards that protect auto-save, plus (when
+ * `page` is set) whether a muse.ai tab sits on a sign-in page. Right after a switch the tab still shows the
+ * previous account's page, so only the cookie check is meaningful then.
+ */
+async function looksExpired(id, settings, { page = true } = {}) {
+  if (page && await onLoginPage(settings.domains)) return true;
+  const saved = await withVault(async (d) => (d.profiles[id] ? d.profiles[id].cookies : null), { write: false, touch: false });
+  if (!saved) return false;
+  const live = await captureCookies(settings.domains);
+  return looksLoggedOut(saved.length, live.length) || lostCredentials(saved, live);
+}
+
+// Never wait on the vault for a loop check: a stuck vault operation must not stall the loop as well.
+const capped = (p, ms, fallback) => {
+  let t;
+  return Promise.race([p.catch(() => fallback), new Promise((res) => { t = setTimeout(() => res(fallback), ms); })]).finally(() => clearTimeout(t));
+};
+
+async function flagNeedsLogin(id, name) {
+  if ((await getNeedsLogin())[id]) return;
+  await needsLoginUpdate((n) => ({ ...n, [id]: Date.now() }));
+  await appendApproveLog({
+    decision: 'needs-login', account: name,
+    title: 'Signed out: sign in to this account again, then re-save it (the refresh button). The loop skips it until then.'
+  });
+}
+
+const logTimeout = (name, why) => appendApproveLog({ decision: 'loop-timeout', account: name || '', title: why });
+
+async function endLoop(now) {
+  await chrome.storage.session.set({ lastLoopEnd: now });
+  await chrome.storage.session.remove('loopState');
+}
 
 async function loopTick() {
   const a = await getApprove();
@@ -537,35 +648,71 @@ async function loopTick() {
   if (!a.enabled || !a.loop || !k) { if (st) await chrome.storage.session.remove('loopState'); return; }
   const now = Date.now();
   const { lastLoopEnd = 0 } = await chrome.storage.session.get('lastLoopEnd');
+  const s = await getSettings();
+  const locked = (e) => e && (e.code === 'LOCKED' || e.code === 'NO_VAULT');
 
   let state = st;
-  if (!state) {
-    if (now - lastLoopEnd < a.loopMinutes * 60000) return;
-    const ids = await withVault(async (d) => Object.values(d.profiles).sort((x, y) => x.name.localeCompare(y.name)).map((p) => p.id),
-      { write: false, touch: false });
-    if (!ids.length) return;
-    state = { queue: ids, i: -1, dwellAt: 0 };
-  } else {
-    const waited = now - state.dwellAt;
-    const settled = approveIdleAt > state.dwellAt && waited >= DWELL_MIN_MS;
-    if (!settled && waited < DWELL_MAX_MS) return;
-  }
-
-  state.i += 1;
-  if (state.i >= state.queue.length) {
-    await chrome.storage.session.set({ lastLoopEnd: now });
-    await chrome.storage.session.remove('loopState');
-    return;
-  }
-  const s = await getSettings();
+  const nameOf = (id) => (state && state.names && state.names[id]) || '';
   try {
-    await withVault((d, commit) => doSwitch(d, state.queue[state.i], s, commit), { touch: false });
-    if (!(await siteTabs(s.domains)).length) await chrome.tabs.create({ url: 'https://muse.ai/', active: false });
+    if (!state) {
+      if (now - lastLoopEnd < a.loopMinutes * 60000) return;
+      const skip = await getNeedsLogin();
+      const all = await withVault(async (d) => Object.values(d.profiles).sort((x, y) => x.name.localeCompare(y.name)).map((p) => [p.id, p.name]),
+        { write: false, touch: false });
+      const queue = all.map(([id]) => id).filter((id) => !skip[id]);
+      if (!queue.length) return;
+      state = { queue, names: Object.fromEntries(all), i: -1, dwellAt: 0, startedAt: now, switched: false };
+    } else {
+      if (now - (state.startedAt || now) > LOOP_MAX_MS) {
+        await logTimeout('', `Account loop stopped after ${Math.round(LOOP_MAX_MS / 60000)} minutes; ${Math.max(0, state.queue.length - state.i - 1)} account(s) were not visited this round.`);
+        await endLoop(now);
+        return;
+      }
+      const waited = now - state.dwellAt;
+      if (state.switched) {
+        const settled = approveIdleAt > state.dwellAt && waited >= DWELL_MIN_MS;
+        if (!settled) {
+          let why = '';
+          if (waited >= TAB_GONE_MS && !(await siteTabs(s.domains)).length) why = 'the muse.ai tab was closed';
+          else if (waited >= DWELL_MAX_MS) why = `the page never reported that it was done within ${Math.round(DWELL_MAX_MS / 1000)} s`;
+          if (!why) return; // still dwelling
+          await logTimeout(nameOf(state.queue[state.i]), `Skipped ahead: ${why}.`);
+        }
+        // Leaving this account: if it landed on a sign-in page or lost its cookies, say so.
+        const cur = state.queue[state.i];
+        if (await capped(looksExpired(cur, s), 10000, false)) await flagNeedsLogin(cur, nameOf(cur));
+      }
+    }
+
+    const skip = await getNeedsLogin();
+    do { state.i += 1; } while (state.i < state.queue.length && skip[state.queue[state.i]]);
+    if (state.i >= state.queue.length) { await endLoop(now); return; }
+
+    const id = state.queue[state.i];
+    state.switched = false;
+    state.dwellAt = Date.now();
+    let cap;
+    const outcome = await Promise.race([
+      withVault((d, commit) => doSwitch(d, id, s, commit), { touch: false }).then((r) => ({ r }), (e) => ({ e })),
+      new Promise((res) => { cap = setTimeout(() => res({ timeout: true }), SWITCH_MAX_MS); })
+    ]).finally(() => clearTimeout(cap));
+    if (outcome.timeout) {
+      await logTimeout(nameOf(id), `Skipped: switching did not finish within ${SWITCH_MAX_MS / 1000} s.`);
+    } else if (outcome.e) {
+      if (locked(outcome.e)) { await chrome.storage.session.remove('loopState'); return; }
+      // Account missing or restore failed: skip it, carry on with the rest.
+    } else if (outcome.r && outcome.r.rolledBack) {
+      await flagNeedsLogin(id, nameOf(id)); // none of its saved cookies could be restored: the session is gone
+    } else {
+      if (!(await siteTabs(s.domains)).length) await chrome.tabs.create({ url: 'https://muse.ai/', active: false });
+      state.switched = true;
+      state.dwellAt = Date.now();
+      if (await capped(looksExpired(id, s, { page: false }), 10000, false)) { await flagNeedsLogin(id, nameOf(id)); state.switched = false; }
+    }
   } catch (e) {
-    if (e.code === 'LOCKED' || e.code === 'NO_VAULT') { await chrome.storage.session.remove('loopState'); return; }
-    // Account missing or restore failed: skip it, carry on with the rest.
+    if (locked(e)) { await chrome.storage.session.remove('loopState'); return; }
+    throw e;
   }
-  state.dwellAt = Date.now();
   await chrome.storage.session.set({ loopState: state });
   updateBadge();
 }
@@ -591,7 +738,8 @@ const handlers = {
       }
       throw e;
     }
-    return { state: 'unlocked', settings, frozen: await isFrozen(), ...m };
+    const nl = await getNeedsLogin();
+    return { state: 'unlocked', settings, frozen: await isFrozen(), ...m, profiles: m.profiles.map((p) => ({ ...p, needsLogin: !!nl[p.id] })) };
   },
 
   async setup({ pass }) {
@@ -640,6 +788,7 @@ const handlers = {
       await syncProfile(d, id, s, { force: true });
       d.activeId = id;
       await clearFrozen();
+      await clearNeedsLogin(id); // re-saved by the user: the loop may visit it again
       return {};
     });
   },
@@ -673,6 +822,7 @@ const handlers = {
       P(d, id);
       delete d.profiles[id];
       if (d.activeId === id) d.activeId = null;
+      await clearNeedsLogin(id);
       return {};
     });
   },
@@ -694,11 +844,15 @@ const handlers = {
     });
   },
 
-  async getApprove() { return { approve: await getApprove() }; },
+  async getApprove() {
+    const { staleWarn = {} } = await chrome.storage.session.get('staleWarn');
+    return { approve: await getApprove(), stale: Object.keys(staleWarn).length > 0 };
+  },
   async setApprove({ approve }) {
     const next = sanitizeApprove(approve);
     await chrome.storage.local.set({ approve: next });
     if (!next.loop) await chrome.storage.session.remove(['loopState', 'lastLoopEnd']);
+    if (!next.enabled) await clearAllStale();
     return { approve: next };
   },
   async approveLog() {
@@ -838,6 +992,7 @@ async function updateBadge() {
   try {
     const { k } = await chrome.storage.session.get('k');
     const frozen = await isFrozen();
+    const { staleWarn = {} } = await chrome.storage.session.get('staleWarn');
     let text = '';
     let color = '#0f766e';
     if (!k) { text = 'LOCK'; color = '#6b7280'; }
@@ -849,6 +1004,8 @@ async function updateBadge() {
       else if (name) text = Array.from(name).slice(0, 2).join('').toUpperCase();
       else { text = '?'; color = '#6b7280'; }
     }
+    // Auto-approve cannot find Muse's controls: louder than any other state until it recovers.
+    if (Object.keys(staleWarn).length) { text = 'WARN'; color = '#c2410c'; }
     await chrome.action.setBadgeText({ text });
     await chrome.action.setBadgeBackgroundColor({ color });
   } catch { /* cosmetic only */ }

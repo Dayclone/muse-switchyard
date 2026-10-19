@@ -49,6 +49,12 @@ button.wide { width: 100%; margin-top: 6px; }
 .card .warn { color: var(--warn); font-size: 11px; display: block; }
 .badge { font-size: 10px; color: var(--accent); border: 1px solid var(--accent); border-radius: 10px; padding: 0 6px; margin-left: 6px; }
 
+.badge.relogin { color: var(--warn); border-color: var(--warn); }
+.logline { margin: 0 0 3px; }
+.logline.d-confirmed { color: var(--accent); }
+.logline.d-stuck, .logline.d-stale, .logline.d-needs-login, .logline.d-loop-timeout { color: var(--danger); font-weight: 600; }
+.logline.d-needs-input { color: var(--warn); }
+
 .msg { margin-top: 10px; padding: 7px 10px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); }
 .msg.err { color: var(--danger); border-color: var(--danger); }
 .msg.ok { color: var(--accent); }
