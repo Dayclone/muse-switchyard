@@ -150,17 +150,38 @@
         log({ decision: verdict, ...info });
       }
     }
-    if (!cards.length) openReviewBar();
+    if (!cards.length && !openReviewBar()) openPanel();
+  }
+
+  let lastPanelClick = 0;
+  /**
+   * In the chat-only view the right pane is closed. Muse's avatar at the top centre opens it.
+   * Found by shape and position, never by its name (the name is user-editable). Only clicked while
+   * no pane controls exist, so an open pane is never toggled shut.
+   */
+  function openPanel() {
+    if (document.querySelector('button[aria-label="Approvals"], button[data-pel-click="status_close_panel"]')) return false;
+    if (Date.now() - lastPanelClick < 4000) return false;
+    const avatar = [...document.querySelectorAll('[role="button"]')].filter((e) => {
+      if (!visible(e) || !/\baspect-square\b/.test(e.className) || !/\brounded-full\b/.test(e.className)) return false;
+      const r = e.getBoundingClientRect();
+      return r.top >= 0 && r.top < 100 && r.width >= 32 && r.width <= 96 && Math.abs(r.width - r.height) <= 2;
+    }).sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+    if (!avatar) return false;
+    lastPanelClick = Date.now();
+    avatar.click();
+    return true;
   }
 
   /** The pane may sit on another tab; the "A task needs review -> Review" bar opens the approvals. */
   function openReviewBar() {
-    if (Date.now() - lastReviewClick < 20000) return;
+    if (Date.now() - lastReviewClick < 20000) return true; // opened a moment ago: let the pane render
     // Muse tags this button; fall back to text + a nearby "needs review" label if the tag ever changes.
     const nearLabel = (b) => { let e = b; for (let i = 0; i < 3 && e.parentElement; i++) { e = e.parentElement; if (/needs review/i.test(e.textContent || '')) return true; } return false; };
     const btn = [...document.querySelectorAll('button')].find((b) => visible(b) &&
       (b.getAttribute('data-pel-click') === 'chat_background_approval_review' || (norm(b.textContent) === 'Review' && nearLabel(b))));
-    if (btn) { lastReviewClick = Date.now(); btn.click(); }
+    if (btn) { lastReviewClick = Date.now(); btn.click(); return true; }
+    return false;
   }
 
   function idleCheck() {
@@ -198,5 +219,5 @@
   } catch { /* ignore */ }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 
-  if (window.__SY_TEST__) window.__SY_TEST__.approve = { classify, decide, findCards, sanitize, scan, ensureApprovalsTab, setCfg: (c) => { cfg = sanitize(c); } };
+  if (window.__SY_TEST__) window.__SY_TEST__.approve = { classify, decide, findCards, sanitize, scan, ensureApprovalsTab, openPanel, setCfg: (c) => { cfg = sanitize(c); } };
 })();

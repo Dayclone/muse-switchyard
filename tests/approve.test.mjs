@@ -93,6 +93,7 @@ else {
     const w = dom.window;
     // jsdom has no layout: make every element count as visible, and observe clicks
     Object.defineProperty(w.HTMLElement.prototype, 'offsetWidth', { get: () => 10 });
+    w.HTMLElement.prototype.getBoundingClientRect = function () { return { top: 12, left: 300, width: 56, height: 56, right: 356, bottom: 68 }; };
     const logs = [];
     w.chrome = { runtime: { sendMessage: (m) => { logs.push(m); return Promise.resolve(); } }, storage: { local: { get: () => Promise.resolve({ approve: cfg }) }, onChanged: { addListener() {} } } };
     w.__SY_TEST__ = {};
@@ -148,6 +149,18 @@ else {
     assert.equal(r.tabClicks(), 1);
     const plain = '<div><span>A task needs review</span><button id="appr"><span>Review</span></button></div>';
     assert.equal((await run(plain, { enabled: true, all: true })).tabClicks(), 1, 'text fallback also works');
+  });
+
+  await test('DOM: chat-only view: opens the pane via the avatar (found by shape, not name), never when a pane is open', async () => {
+    const avatar = (label) => `<div id="appr" role="button" aria-label="${label}" class="relative z-10 aspect-square shrink-0 rounded-full"></div><div role="button" aria-label="${label}" class="rounded-18"></div>`;
+    const r = await run(avatar('Muse'), { enabled: true, all: true });
+    assert.equal(r.tabClicks(), 1, 'clicked the avatar');
+    assert.equal((await run(avatar('Renamed Bot'), { enabled: true, all: true })).tabClicks(), 1, 'works after a rename');
+    const open = '<button aria-label="Approvals" aria-pressed="true"></button>' + avatar('Muse');
+    assert.equal((await run(open, { enabled: true, all: true })).tabClicks(), 0, 'pane already open: leave it alone');
+    const close = '<button data-pel-click="status_close_panel"></button>' + avatar('Muse');
+    assert.equal((await run(close, { enabled: true, all: true })).tabClicks(), 0, 'pane open on another view: leave it alone');
+    assert.equal((await run(avatar('Muse'), { enabled: false })).tabClicks(), 0, 'off: does nothing');
   });
 
   await test('DOM: rate limit stops a runaway at maxPerMinute', async () => {

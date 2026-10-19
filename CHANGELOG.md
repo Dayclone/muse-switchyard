@@ -5,6 +5,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-19
+
+### Fixed
+- Chat-only view: when Muse's right pane is closed, the watcher now opens it by clicking the avatar at the top centre (found by shape and position, never by its editable name), then switches to Approvals. It never clicks while a pane is already open.
+
 ## [0.3.0] - 2026-10-19
 
 ### Added
