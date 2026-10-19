@@ -1,0 +1,7 @@
+# Every change asks the maintainer for review. Sensitive files are listed explicitly so they are never missed.
+*                   @Dayclone
+/background.js      @Dayclone
+/content/           @Dayclone
+/lib/               @Dayclone
+/manifest.json      @Dayclone
+/.github/           @Dayclone
