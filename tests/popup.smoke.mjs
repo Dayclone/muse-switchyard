@@ -113,6 +113,56 @@ await step('lock screen: wrong passphrase is reported, right one unlocks', async
   assert.match(text(), /Accounts/);
 });
 
+await step('an account that needs re-login carries a tag; a healthy one does not', async () => {
+  await load();
+  assert.equal(app().querySelectorAll('.badge.relogin').length, 0);
+  const st = await M.send({ type: 'status' });
+  M.state.session.needsLogin = { [st.profiles[0].id]: Date.now() };
+  await load();
+  const tag = app().querySelector('.card .badge.relogin');
+  assert.ok(tag, 'tag shown');
+  assert.equal(tag.textContent, 'needs re-login');
+  assert.match(app().querySelector('.card').textContent, /press ↻ to re-save/);
+  delete M.state.session.needsLogin;
+});
+
+await step('the log shows confirmed / stuck / warnings distinctly, as text only', async () => {
+  await M.send({ type: 'setApprove', approve: { enabled: true } });
+  const t = Date.now();
+  M.state.local.approveLog = [
+    { t, decision: 'approved', title: 'Allow? <b>bold</b>', action: '', task: '', category: 'messages', account: 'Work' },
+    { t, decision: 'confirmed', title: 'Allow?', action: '', task: '', category: 'messages', account: 'Work' },
+    { t, decision: 'stuck', title: 'Allow?', action: '', task: '', category: 'messages', account: 'Work' },
+    { t, decision: 'needs-input', title: 'Pick a time?', action: '', task: '', category: 'other', account: 'Work' },
+    { t, decision: 'needs-login', title: 'Signed out', action: '', task: '', category: '', account: 'Work' },
+    { t, decision: 'loop-timeout', title: 'Skipped', action: '', task: '', category: '', account: 'Work' },
+    { t, decision: 'stale', title: 'Muse layout', action: '', task: '', category: '', account: 'Work' },
+    { t, decision: 'mystery"><i>', title: 'x', action: '', task: '', category: '', account: '' }
+  ];
+  await click(app().querySelector('button[aria-label="Settings"]'), 150);
+  await click(btn('Show what was approved'), 150);
+  const log = app().querySelector('.log');
+  assert.equal(log.hidden, false);
+  assert.match(log.querySelector('.d-confirmed').textContent, /CONFIRMED \(card closed\)/);
+  assert.match(log.querySelector('.d-stuck').textContent, /STUCK \(card did not close\)/);
+  assert.match(log.querySelector('.d-approved').textContent, /APPROVED \(clicked\)/);
+  for (const d of ['needs-input', 'needs-login', 'loop-timeout', 'stale', 'other']) assert.ok(log.querySelector('.d-' + d), d);
+  assert.equal(log.querySelectorAll('b, i').length, 0, 'titles and decisions are text, never markup');
+  assert.notEqual(log.querySelector('.d-confirmed').className, log.querySelector('.d-stuck').className);
+});
+
+await step('a stale-markup warning shows in the auto-approve section until it clears', async () => {
+  assert.doesNotMatch(text(), /layout may have changed/);
+  M.state.session.staleWarn = { 1: Date.now() };
+  await load();
+  await click(app().querySelector('button[aria-label="Settings"]'), 150);
+  assert.match(text(), /layout may have changed; auto-approve could not find its controls/);
+  delete M.state.session.staleWarn;
+  await load();
+  await click(app().querySelector('button[aria-label="Settings"]'), 150);
+  assert.doesNotMatch(text(), /layout may have changed/);
+});
+
 await step('a damaged vault shows the corrupt screen with a typed-ERASE escape hatch', async () => {
   const v = M.state.local.vault;
   v.ct = v.ct.slice(0, -8) + 'AAAAAAAA';

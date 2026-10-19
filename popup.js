@@ -166,8 +166,9 @@ function renderCorrupt() {
 
 function profileCard(p, active) {
   const nameBox = h('div', { class: 'name' },
-    h('b', {}, p.name, active ? h('span', { class: 'badge' }, 'active') : null),
+    h('b', {}, p.name, active ? h('span', { class: 'badge' }, 'active') : null, p.needsLogin ? h('span', { class: 'badge relogin' }, 'needs re-login') : null),
     h('span', {}, `saved ${ago(p.updated)} · ${p.cookieCount} cookies`),
+    p.needsLogin ? h('span', { class: 'warn' }, 'Its session expired, so the account loop skips it. Switch to it, sign in, then press ↻ to re-save.') : null,
     p.warn ? h('span', { class: 'warn' }, p.warn) : null
   );
 
@@ -250,6 +251,7 @@ function approveSection() {
   const logBox = h('div', { class: 'log', hidden: true });
   const keepNote = h('p', { class: 'small', hidden: true });
   let a = null;
+  let stale = false;
 
   const save = async (patch) => {
     try {
@@ -262,18 +264,28 @@ function approveSection() {
     h('input', { type: 'checkbox', checked: a[key], disabled: extra.disabled, onchange: (e) => save({ [key]: e.target.checked }) }),
     h('div', {}, title, hint ? h('small', {}, hint) : null));
 
+  // How each decision reads in the log. Unknown values (the log is stored data) fall back to a neutral style.
+  const DECISIONS = {
+    approved: 'APPROVED (clicked)', retry: 'RETRY', confirmed: 'CONFIRMED (card closed)', stuck: 'STUCK (card did not close)',
+    skipped: 'SKIPPED', held: 'HELD', learn: 'LEARN', 'rate-limited': 'RATE-LIMITED', 'needs-input': 'NEEDS INPUT (left for you)',
+    stale: 'WARNING', 'needs-login': 'NEEDS RE-LOGIN', 'loop-timeout': 'LOOP TIMEOUT'
+  };
   const showLog = () => guarded(async () => {
     const r = await call('approveLog');
     const when = (t) => new Date(t).toLocaleString();
-    logBox.textContent = r.log.length
-      ? r.log.map((e) => `${when(e.t)}  ${e.decision.toUpperCase()}  [${e.category || '?'}] ${e.title}${e.task ? '  (' + e.task + ')' : ''}${e.account ? '  as ' + e.account : ''}`).join('\n')
-      : 'Nothing logged yet.';
+    const line = (e) => {
+      const known = Object.prototype.hasOwnProperty.call(DECISIONS, e.decision);
+      return h('div', { class: `logline d-${known ? e.decision : 'other'}` },
+        `${when(e.t)}  ${known ? DECISIONS[e.decision] : String(e.decision).toUpperCase()}  ${e.category ? '[' + e.category + '] ' : ''}${e.title}${e.task ? '  (' + e.task + ')' : ''}${e.account ? '  as ' + e.account : ''}`);
+    };
+    logBox.replaceChildren(...(r.log.length ? r.log.map(line) : ['Nothing logged yet.']));
     logBox.hidden = false;
   });
 
   function draw() {
     const off = !a.enabled;
     box.replaceChildren(...[
+      stale ? h('div', { class: 'msg err' }, 'Warning: Muse’s page layout may have changed; auto-approve could not find its controls on an open muse.ai tab. Check that tab, or reload it. This clears itself once the controls are seen again.') : null,
       check('enabled', 'Auto-approve is on', 'Master switch. While off, nothing is clicked. Works on muse.ai tabs only.'),
       check('all', 'Approve everything', 'Clicks Allow on any approval card, including types Switchyard has not seen before.', { disabled: off }),
       check('messages', 'Approve messages', 'Cards that send a Messenger / chat message (for example your Marketplace auto-replies).', { disabled: off || a.all }),
@@ -301,7 +313,7 @@ function approveSection() {
     ]);
   }
 
-  call('getApprove').then((r) => { a = r.approve; draw(); }).catch((e) => { box.textContent = e.message; });
+  call('getApprove').then((r) => { a = r.approve; stale = !!r.stale; draw(); }).catch((e) => { box.textContent = e.message; });
   return box;
 }
 

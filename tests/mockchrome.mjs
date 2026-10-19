@@ -18,7 +18,7 @@ export function installChrome() {
     grant: true,
     quotaBytes: 10_000_000
   };
-  const L = { message: [], changed: [], alarm: [], command: [], idle: [] };
+  const L = { message: [], changed: [], alarm: [], command: [], idle: [], removed: [] };
 
   Date.now = () => state.now;
   const nowSec = () => state.now / 1000;
@@ -156,7 +156,8 @@ export function installChrome() {
         return state.tabs.filter((t) => res.some((r) => r.test(t.url))).map((t) => ({ id: t.id, url: t.url }));
       },
       async reload(id) { state.reloads.push(id); },
-      async create() {}
+      async create() {},
+      onRemoved: { addListener: (f) => L.removed.push(f) }
     },
     scripting: {
       async executeScript({ target, func, args = [] }) {
@@ -215,6 +216,11 @@ export function installChrome() {
       state.grant = true;
       state.quotaBytes = 10_000_000;
       state.now = 1_800_000_000_000;
+    },
+    removeTab(id) {
+      const i = state.tabs.findIndex((t) => t.id === id);
+      if (i >= 0) state.tabs.splice(i, 1);
+      for (const l of L.removed) l(id);
     },
     addTab(t) {
       const tab = { id: state.tabs.length + 1, local: {}, session: {}, ...t };

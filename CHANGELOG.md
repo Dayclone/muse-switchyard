@@ -5,6 +5,20 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-19
+
+### Added
+- Markup watchdog: with auto-approve on, a muse.ai tab that shows none of the known controls for 10 minutes sends `approve:stale` (once per 30 minutes per tab); the background logs a `stale` warning, shows `WARN` on the toolbar badge and a banner in Settings until a later approved/skipped card or an `approve:controls` report.
+- Click verification: about 3 seconds after clicking Allow the content script logs `confirmed` (card gone) or, after the retry limit, `stuck`. The popup log shows them distinctly.
+- Cards with an unsatisfied required input (select, radio, checkbox, text, textarea, ARIA equivalents, `aria-required`) are not clicked; logged once as `needs-input`.
+- Account loop: an account that lands on a sign-in page or loses its cookies is marked `needsLogin` (session storage), skipped until re-saved with ↻, logged as `needs-login`, and tagged "needs re-login" in the popup.
+
+### Fixed
+- Account loop robustness: a stalled account (tab closed, page never reports idle, switch hangs) is skipped with a `loop-timeout` log entry instead of holding up later accounts. Caps: 150 s dwell per account, 20 s per switch, 15 s without any muse.ai tab, 45 min for the whole round. A switch that rolls back (none of the saved cookies could be restored) now skips the account at once instead of dwelling on the previous one, and flags it `needs-login`.
+
+### Changed
+- Decisions in `approve:log` from the page are allow-listed; `stale`, `needs-login` and `loop-timeout` can only come from the background.
+
 ## [0.3.1] - 2026-10-19
 
 ### Fixed

@@ -86,6 +86,24 @@ Settings → Auto-approve. **Off until you turn on the master switch.**
   clear (or 2.5 minutes), move on. Needs the vault unlocked (raise the auto-lock time). Reloads muse.ai tabs.
 - **Switches the right pane to "Approvals" itself** before looking for cards.
 - **Log** shows card title, action, task and account, never the recipient or message body. Capped at 200.
+  After each click it adds a follow-up line about 3 seconds later: `CONFIRMED` when the card closed, or
+  `STUCK` when it was still there after the retries. `APPROVED` alone only means Allow was clicked.
+- **Cards that need your input are left alone.** If an approval card has an empty required field (a
+  dropdown, radio button, checkbox, text box, or anything marked required), nothing is clicked and the log
+  says `NEEDS INPUT`. Any empty visible field counts, so a card with an optional unticked checkbox is also
+  left for you. It is approved once the field is filled in. This applies even with "Approve everything".
+- **Layout-change warning.** If auto-approve is on and a muse.ai tab shows none of the controls it relies on
+  (Approvals tab, pane close button, avatar, review bar, a card) for 10 minutes, the toolbar badge reads
+  `WARN`, the log gets a `WARNING` line, and Settings shows a banner. It clears when the controls are seen
+  again. It cannot tell a changed Muse page from a muse.ai tab that simply has none of those controls
+  (a login or marketing page), so close tabs you do not use for approvals. No page text is stored.
+- **Expired accounts in the loop.** If an account lands on a sign-in page (or loses its cookies) while the
+  loop is on it, the account gets a **needs re-login** tag, the log gets a `NEEDS RE-LOGIN` line, and the
+  loop skips it. Switch to it, sign in yourself, and press ↻ to re-save it; the loop includes it again.
+  Switchyard never types or submits anything on a sign-in page. The tag is kept until the browser restarts.
+- **The loop cannot get stuck.** A closed tab, a page that never says it is done, or a switch that hangs
+  skips that account (log: `LOOP TIMEOUT`) instead of blocking the rest. The whole round is capped at 45
+  minutes. Locking the vault stops the loop.
 - **Keep awake.** Browsers put inactive tabs to sleep. A button in Settings opens the right browser page
   (Chrome: Memory Saver, Edge: `edge://settings/system/managePerformance`) and copies `muse.ai` so you can
   add it to the "always keep active" list. Extensions cannot edit that list themselves.
