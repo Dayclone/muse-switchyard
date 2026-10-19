@@ -310,7 +310,7 @@ function approveSection() {
       h('button', { class: 'wide', onclick: showLog }, 'Show what was approved'),
       h('button', { class: 'wide', onclick: () => guarded(async () => { await call('clearApproveLog'); logBox.hidden = true; }) }, 'Clear the log'),
       logBox
-    ]);
+    ].filter(Boolean));
   }
 
   call('getApprove').then((r) => { a = r.approve; stale = !!r.stale; draw(); }).catch((e) => { box.textContent = e.message; });

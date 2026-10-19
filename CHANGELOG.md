@@ -5,6 +5,14 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-19
+
+### Fixed
+- Settings: the Auto-approve section showed a stray "null" text line at the top when there was no stale warning.
+
+### Changed
+- CI and release workflows pin `ubuntu-24.04` instead of `ubuntu-latest`, ahead of GitHub's move to Ubuntu 26.
+
 ### Added
 - README screenshots (`docs/img/`) generated from demo data by the dev-only `tools/screenshots.mjs`.
 

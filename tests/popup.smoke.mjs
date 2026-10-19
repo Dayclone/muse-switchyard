@@ -80,6 +80,9 @@ await step('settings view renders every control without throwing', async () => {
   await click(btn('Show what is stored right now'), 200);
   assert.match(app().querySelector('pre').textContent, /__Secure-sid/);
   assert.ok(!app().querySelector('pre').textContent.includes('sid-A'), 'diagnostics never print values');
+  const approveBox = app().querySelector('label.check')?.parentElement;
+  assert.ok(approveBox, 'auto-approve section rendered');
+  assert.equal(approveBox.firstChild.nodeType, 1, 'no stray "null" text node first (replaceChildren must not receive null)');
 });
 
 await step('export requires the current passphrase (UI path)', async () => {

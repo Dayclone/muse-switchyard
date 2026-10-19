@@ -102,10 +102,6 @@ try {
   await pg.click('button[aria-label="Settings"]');
   await pg.waitForSelector('label.check');
   await pg.waitForTimeout(150);
-  await pg.evaluate(() => { // popup.js currently renders a literal "null" text node here; hide it so the docs show the intended UI
-    const w = document.createTreeWalker(document.getElementById('app'), NodeFilter.SHOW_TEXT);
-    for (let n = w.nextNode(); n; n = w.nextNode()) if (n.nodeValue === 'null') n.remove();
-  });
   const loopBottom = await pg.evaluate(() => Math.ceil(document.querySelector('.field input[type=number]').getBoundingClientRect().bottom + window.scrollY) + 14);
   await shot(pg, 'popup-settings.png', { x: 0, y: 0, width: 360, height: loopBottom });
 
