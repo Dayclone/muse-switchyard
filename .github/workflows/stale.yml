@@ -1,0 +1,23 @@
+name: Stale issues and PRs
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-stale: 60
+          days-before-close: 14
+          stale-issue-message: 'No activity for 60 days. This will close in 14 days unless there is an update.'
+          stale-pr-message: 'No activity for 60 days. This will close in 14 days unless there is an update.'
+          exempt-issue-labels: 'security,pinned,help wanted'
+          exempt-pr-labels: 'security,pinned'

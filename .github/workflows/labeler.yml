@@ -1,0 +1,19 @@
+name: Label PRs
+
+# pull_request_target so labels can be applied to PRs from forks. This workflow never checks out
+# or runs the PR's code: it only reads .github/labeler.yml from the base branch.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/labeler@v5
+        with:
+          sync-labels: true
