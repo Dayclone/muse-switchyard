@@ -5,6 +5,9 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- README screenshots (`docs/img/`) generated from demo data by the dev-only `tools/screenshots.mjs`.
+
 ## [0.4.0] - 2026-10-19
 
 ### Added

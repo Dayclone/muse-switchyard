@@ -9,6 +9,14 @@ Chrome and Edge, Manifest V3. No servers, no analytics, no network calls of its 
 > supported by Meta or Muse. "Muse" and "Meta" are their owners' trademarks. Using several accounts or
 > automating clicks may be restricted by the service's terms. That is your call and your risk.
 
+## Screenshots
+
+Demo data only (no real accounts).
+
+![Switchyard popup: the account list with one active account and one marked "needs re-login"](docs/img/popup-accounts.png)
+![Switchyard settings: the Auto-approve section with its toggles](docs/img/popup-settings.png)
+![Switchyard activity log: approved, confirmed, skipped and needs re-login entries](docs/img/popup-log.png)
+
 ## Features
 
 - **Fast account switching.** Save each logged-in account once, then swap with one click or `Alt+Shift+S`.
@@ -145,6 +153,7 @@ Issues and pull requests are welcome. Nothing is merged without a reviewed PR. R
 npm install       # dev dependency: jsdom (only the DOM tests use it)
 npm test          # unit + integration + auto-approve DOM + popup tests (Node 20+)
 npm run icons     # regenerate icons/ (stdlib Python)
+node tools/screenshots.mjs   # regenerate docs/img/*.png from canned demo data (needs Playwright + Chromium, not a dependency)
 npm run bump -- minor   # bump version in package.json, manifest.json and CHANGELOG.md
 ```
 
