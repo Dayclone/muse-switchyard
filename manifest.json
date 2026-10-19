@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "Switchyard",
+  "version": "0.3.0",
+  "description": "Encrypted multi-account session switcher for muse.ai.",
+  "minimum_chrome_version": "119",
+  "permissions": [
+    "cookies",
+    "storage",
+    "scripting",
+    "alarms",
+    "idle"
+  ],
+  "commands": {
+    "next-account": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "Switch to the next saved account"
+    }
+  },
+  "host_permissions": [
+    "https://*.muse.ai/*"
+  ],
+  "optional_host_permissions": [
+    "https://*.facebook.com/*",
+    "https://*.meta.ai/*",
+    "https://*.meta.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Switchyard",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.muse.ai/*"
+      ],
+      "js": [
+        "content/approve.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

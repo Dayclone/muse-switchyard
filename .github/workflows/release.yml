@@ -1,0 +1,34 @@
+name: Release
+
+# Push a tag like v0.3.1 (after merging the version bump PR) to publish a release.
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Tag must match the manifest version
+        run: |
+          V=$(node -p "require('./manifest.json').version")
+          if [ "v$V" != "${GITHUB_REF_NAME}" ]; then echo "tag ${GITHUB_REF_NAME} != manifest v$V"; exit 1; fi
+      - name: Build extension zip
+        run: |
+          zip -r "switchyard-${GITHUB_REF_NAME}.zip" manifest.json background.js popup.html popup.js popup.css content lib icons LICENSE README.md
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "switchyard-${GITHUB_REF_NAME}.zip" \
+            --title "Switchyard ${GITHUB_REF_NAME}" --generate-notes
