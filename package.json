@@ -1,11 +1,13 @@
 {
   "name": "muse-switchyard",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "description": "Encrypted multi-account session switcher and opt-in auto-approve for muse.ai (unofficial)",
   "license": "MIT",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "test": "node tests/version.test.mjs && node tests/test.mjs && node tests/integration.mjs && node tests/approve.test.mjs && node tests/popup.smoke.mjs",
     "bump": "node scripts/bump.mjs",
