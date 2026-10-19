@@ -84,3 +84,5 @@ All proven in Node against jsdom fixtures and the fake `chrome.*` API only. **No
   late accounts in a very long list could be starved. A hung switch is abandoned but the stuck vault operation behind it is not cancelled.
 - **Rollback flagged as needs-login.** A switch whose cookies all fail to restore is treated as an expired session; a permissions or
   browser-side failure would be mislabelled the same way.
+
+<!-- labeler check, throwaway -->
