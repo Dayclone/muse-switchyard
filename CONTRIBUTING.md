@@ -57,5 +57,5 @@ semver-minor and semver-patch updates only. It approves them only when the repo 
 and approve pull requests", and "Allow auto-merge" must be on. Major updates and human PRs are
 merged manually.
 
-jsdom major updates are ignored for now: jsdom 30 needs a newer Node than 20, which this repo still
-supports.
+jsdom 30 and later are ignored for now: they need a newer Node than 20, which this repo still
+supports. jsdom 29 is the newest that runs on Node 20.

@@ -82,6 +82,9 @@ await step('settings view renders every control without throwing', async () => {
   assert.ok(!app().querySelector('pre').textContent.includes('sid-A'), 'diagnostics never print values');
   const approveBox = app().querySelector('label.check')?.parentElement;
   assert.ok(approveBox, 'auto-approve section rendered');
+  assert.match(approveBox.textContent, /Always allow for this conversation/, 'the always-allow toggle renders');
+  const aa = [...approveBox.querySelectorAll('label.check')].find((l) => /Always allow/.test(l.textContent)).querySelector('input');
+  assert.equal(aa.checked, false, 'off by default');
   assert.equal(approveBox.firstChild.nodeType, 1, 'no stray "null" text node first (replaceChildren must not receive null)');
 });
 

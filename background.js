@@ -467,7 +467,7 @@ function checkPass(p) {
 /* ------------------------------------------------------------------ */
 
 const APPROVE_DEFAULTS = {
-  enabled: false, all: false, messages: false, listings: false, holdRisky: false, learn: false,
+  enabled: false, all: false, messages: false, listings: false, holdRisky: false, learn: false, alwaysAllow: false,
   maxPerMinute: 12, idleSeconds: 20, loop: false, loopMinutes: 10
 };
 
@@ -481,6 +481,7 @@ function sanitizeApprove(a) {
     listings: o.listings === true,
     holdRisky: o.holdRisky === true,
     learn: o.learn === true,
+    alwaysAllow: o.alwaysAllow === true,
     maxPerMinute: int(o.maxPerMinute, 1, 120, APPROVE_DEFAULTS.maxPerMinute),
     idleSeconds: int(o.idleSeconds, 5, 300, APPROVE_DEFAULTS.idleSeconds),
     loop: b(o.loop, false),
@@ -507,7 +508,7 @@ function appendApproveLog(entry) {
 
 // What the content script may put in the log. Decisions the background owns (stale, needs-login,
 // loop-timeout) are not in this list, so a page-side message can never forge them.
-const PAGE_DECISIONS = new Set(['approved', 'retry', 'skipped', 'held', 'rate-limited', 'learn', 'confirmed', 'stuck', 'needs-input']);
+const PAGE_DECISIONS = new Set(['approved', 'retry', 'skipped', 'held', 'rate-limited', 'learn', 'confirmed', 'stuck', 'needs-input', 'always-allowed']);
 const STALE_RESEND_MS = 30 * 60000;
 const STALE_TEXT = "Muse's page layout may have changed; auto-approve could not find its controls";
 
@@ -544,7 +545,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
       if (!PAGE_DECISIONS.has(decision)) return;
       const { activeName } = await chrome.storage.session.get('activeName');
       await appendApproveLog({ ...msg.entry, account: activeName });
-      if (decision === 'approved' || decision === 'skipped') await clearStale(tabId);
+      if (decision === 'approved' || decision === 'always-allowed' || decision === 'skipped') await clearStale(tabId);
     })();
   } else if (msg.type === 'approve:idle') {
     chrome.storage.session.set({ approveIdleAt: Date.now() }).catch(() => {});

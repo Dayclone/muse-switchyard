@@ -5,10 +5,21 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in "Always allow for this conversation" for non-risky message cards (off by default), logged as
+  ALWAYS ALLOWED.
+
 ### Changed
 
+- Dev and CI dependencies: jsdom 29.1.1 (tests only), `actions/stale@v11`.
 - CONTRIBUTING and AGENTS now document releasing from GitHub Actions and the Dependabot auto-merge
   setup.
+
+### Fixed
+
+- Message cards that now show Send / Don't send (instead of Allow / Deny) were not recognised, so nothing
+  was approved.
 
 ## [0.4.2] - 2026-10-19
 
