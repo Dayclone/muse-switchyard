@@ -1,5 +1,6 @@
 // Switchyard auto-approve: runs on muse.ai pages. Finds approval cards (a card holding both an
-// approve button and a Deny button) and clicks the approve button when the rules allow it.
+// approve button (Allow, or Send on message cards) and a deny button (Deny, or Don't send)) and clicks
+// the approve button when the rules allow it. Message cards show a split button: Send plus a chevron menu.
 // Classic script (content scripts cannot be ES modules); wrapped so nothing leaks onto the page.
 (() => {
   'use strict';
@@ -13,10 +14,13 @@
     listings: false, // Marketplace listing cards
     holdRisky: false, // opt-in: leave payments, deletes, credentials for the user
     learn: false, // log what would happen, click nothing
+    alwaysAllow: false, // opt-in: for non-risky message cards pick "Always allow for this conversation" from the Send menu
     maxPerMinute: 12,
     idleSeconds: 20
   };
-  const APPROVE_LABELS = ['allow', 'allow once', 'approve', 'yes, allow', 'confirm'];
+  const APPROVE_LABELS = ['allow', 'allow once', 'approve', 'yes, allow', 'confirm', 'send'];
+  const DENY_LABELS = ['deny', "don't send", 'do not send'];
+  const ALWAYS_LABEL = 'always allow for this conversation';
   // Matched against the request title + action line only (never the message body, which is
   // buyer-facing text and would false-positive on words like "price" or "finance").
   const RISKY = /\b(pay|payment|purchase|checkout|buy|order|card|cvv|password|passcode|credential|one-time code|otp|wire|transfer|send money|bank|refund|delete|erase|remove account|cancel (?:subscription|account)|unsubscribe|share (?:my )?(?:contacts|files|calendar|location))\b/i;
@@ -30,12 +34,14 @@
   let idleSent = false;
   let lastReviewClick = 0;
   // Timings are constants; tests may shorten them through the test hook only.
-  const timing = { staleMs: 10 * 60000, staleResendMs: 30 * 60000, verifyMs: 3000, retryLimit: 3 };
+  const timing = { staleMs: 10 * 60000, staleResendMs: 30 * 60000, verifyMs: 3000, retryLimit: 3, menuWaitMs: 1500, menuPollMs: 150 };
   let lastControls = Date.now(); // last time any of Muse's known controls was visible
   let lastStale = 0;
   let staleSent = false;
 
   const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  // Lower-cased button text with curly apostrophes folded to straight ones ("Don’t send" -> "don't send").
+  const label = (el) => norm(el.textContent).replace(/[\u2018\u2019\u02bc]/g, "'").toLowerCase();
   const visible = (el) => !!(el && el.isConnected && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
 
   function sanitize(s) {
@@ -48,6 +54,7 @@
       listings: o.listings === true,
       holdRisky: o.holdRisky === true,
       learn: o.learn === true,
+      alwaysAllow: o.alwaysAllow === true,
       maxPerMinute: int(o.maxPerMinute, 1, 120, DEFAULTS.maxPerMinute),
       idleSeconds: int(o.idleSeconds, 5, 300, DEFAULTS.idleSeconds)
     };
@@ -92,7 +99,7 @@
     return out.join('\n');
   }
 
-  const MENU_BTN = /more allow options/i;
+  const MENU_BTN = /more (?:allow|send) options|(?:allow|send) options|more options/i;
   const PLACEHOLDER = /^(select|choose|pick)\b|^(\u2026|\.\.\.)/i;
 
   /** Is this required-looking control filled in? Returns null when it does not apply. Pure DOM reads only. */
@@ -123,7 +130,7 @@
 
   /**
    * True when the card holds a visible, enabled, required-looking input that is still empty. Such a card is
-   * left for the user: clicking Allow would submit an unanswered question. The "More allow options" menu
+   * left for the user: clicking Allow / Send would submit an unanswered question. The split-button chevron ("More allow options")
    * button is not an input. Reads structure and values only; nothing is stored or sent.
    */
   function needsInput(card) {
@@ -136,26 +143,51 @@
     return false;
   }
 
+  /**
+   * The split-button chevron next to the approve button: a visible, text-less button that is neither the
+   * approve nor the deny button. Searched only in Send's own wrapper, then one level up, and never in an
+   * element that holds the question line (that is the card body, which also has the details expander icon). Within each level a menu-like aria-label wins, then
+   * aria-haspopup, then a text-less button holding an <svg> (the markup Muse ships today). Tolerant on
+   * purpose; the exact markup is Muse's to change.
+   */
+  function findMenuBtn(el, approve, deny) {
+    const ok = (x) => x !== approve && x !== deny && visible(x) && el.contains(x);
+    // A scope that already holds the question line is the card body, not the button row: never search there.
+    const scopes = [approve.parentElement, approve.parentElement && approve.parentElement.parentElement]
+      .filter((s) => s && !/\?$/m.test(cardText(s)));
+    for (const scope of scopes) {
+      const cands = [...scope.querySelectorAll('button, [role="button"]')].filter(ok);
+      const pick = cands.find((x) => MENU_BTN.test(x.getAttribute('aria-label') || '')) ||
+        cands.find((x) => /^(menu|true|listbox)$/i.test(x.getAttribute('aria-haspopup') || '')) ||
+        cands.find((x) => !norm(x.textContent) && x.querySelector('svg'));
+      if (pick) return pick;
+    }
+    // Last resort: the element right after Send, if it is (or wraps) a text-less icon button.
+    const next = approve.nextElementSibling;
+    const nb = next && (next.matches('button, [role="button"]') ? next : next.querySelector('button, [role="button"]'));
+    return nb && ok(nb) && !norm(nb.textContent) && nb.querySelector('svg') ? nb : null;
+  }
+
   function findCards(root = document) {
     const cards = [];
     for (const b of root.querySelectorAll('button')) {
-      if (!APPROVE_LABELS.includes(norm(b.textContent).toLowerCase()) || !visible(b)) continue;
+      if (!APPROVE_LABELS.includes(label(b)) || !visible(b)) continue;
       let el = b.parentElement;
       let deny = null;
       for (let i = 0; el && i < 10; i++, el = el.parentElement) {
-        deny = [...el.querySelectorAll('button')].find((x) => norm(x.textContent).toLowerCase() === 'deny');
+        deny = [...el.querySelectorAll('button')].find((x) => DENY_LABELS.includes(label(x)));
         if (deny) break;
       }
       if (!deny) continue;
       // The button row is usually a sibling of the question and details: climb until the question
       // ("...?") is inside, but never into an ancestor that holds another card's approve button.
-      const approveCount = (n) => [...n.querySelectorAll('button')].filter((x) => APPROVE_LABELS.includes(norm(x.textContent).toLowerCase())).length;
+      const approveCount = (n) => [...n.querySelectorAll('button')].filter((x) => APPROVE_LABELS.includes(label(x))).length;
       let text = cardText(el);
       for (let i = 0; i < 8 && !/\?$/m.test(text) && el.parentElement && approveCount(el.parentElement) <= 1; i++) {
         el = el.parentElement;
         text = cardText(el);
       }
-      cards.push({ approve: b, deny, el, text });
+      cards.push({ approve: b, deny, el, text, menu: findMenuBtn(el, b, deny) });
     }
     return cards;
   }
@@ -179,7 +211,7 @@
     return true;
   }
 
-  /** A card disappearing is the proof that Allow worked; one that survives every retry is reported as stuck. */
+  /** A card disappearing is the proof that Allow / Send worked; one that survives every retry is reported as stuck. */
   function verifyLater(c, info, n) {
     setTimeout(() => {
       if (!visible(c.el)) log({ decision: 'confirmed', ...info });
@@ -205,6 +237,41 @@
     }
   }
 
+  /** A visible menu entry reading "Always allow for this conversation", anywhere in the document (menus are portaled). */
+  function findAlwaysItem() {
+    const sel = '[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"], button, [role="button"]';
+    return [...document.querySelectorAll(sel)].find((e) => visible(e) && label(e) === ALWAYS_LABEL) || null;
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const acting = new WeakSet(); // approve buttons with an always-allow run in flight
+
+  /**
+   * Opt-in path for non-risky message cards: open the Send menu and pick "Always allow for this conversation".
+   * If the entry never shows up, close the menu and fall back to a plain click on the approve button.
+   * Logs 'always-allowed' or the normal 'approved' / 'retry'. Never reads or logs message text.
+   */
+  async function alwaysAllowRun(c, info, n) {
+    if (acting.has(c.approve)) return;
+    acting.add(c.approve);
+    try {
+      c.menu.click();
+      const polls = Math.max(1, Math.ceil(timing.menuWaitMs / Math.max(1, timing.menuPollMs)));
+      let item = findAlwaysItem();
+      for (let i = 0; !item && i < polls; i++) { await sleep(timing.menuPollMs); item = findAlwaysItem(); }
+      if (item) {
+        item.click();
+        log({ decision: 'always-allowed', ...info });
+      } else {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+        if (c.menu.getAttribute('aria-expanded') === 'true') c.menu.click();
+        c.approve.click();
+        log({ decision: n > 1 ? 'retry' : 'approved', ...info });
+      }
+      verifyLater(c, info, n);
+    } finally { acting.delete(c.approve); }
+  }
+
   function scan() {
     if (!cfg.enabled) return;
     watchdog();
@@ -220,6 +287,11 @@
         if (seen.n >= timing.retryLimit || Date.now() - seen.at < 4000) continue;
         recent.push(Date.now());
         clicked.set(c.approve, { n: seen.n + 1, at: Date.now(), reported: true });
+        if (cfg.alwaysAllow && info.category === 'messages' && !info.risky && c.menu) {
+          if (acting.has(c.approve)) continue;
+          alwaysAllowRun(c, info, seen.n + 1).catch(() => {});
+          continue;
+        }
         c.approve.click();
         log({ decision: seen.n ? 'retry' : 'approved', ...info });
         verifyLater(c, info, seen.n + 1);
@@ -318,6 +390,6 @@
   } catch { /* ignore */ }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 
-  if (window.__SY_TEST__) window.__SY_TEST__.approve = { classify, decide, findCards, sanitize, scan, ensureApprovalsTab, openPanel, needsInput, controlsVisible,
+  if (window.__SY_TEST__) window.__SY_TEST__.approve = { classify, decide, findCards, sanitize, scan, ensureApprovalsTab, openPanel, needsInput, controlsVisible, findAlwaysItem,
     setCfg: (c) => applyCfg(sanitize(c)), setTiming: (t) => Object.assign(timing, t) };
 })();

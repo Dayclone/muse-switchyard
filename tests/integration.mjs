@@ -610,10 +610,13 @@ await test('auto-approve settings are sanitised and off by default', async () =>
   const d = (await ok('getApprove')).approve;
   assert.equal(d.enabled, false);
   assert.equal(d.holdRisky, false, 'nothing held by default');
-  const r = await ok('setApprove', { approve: { enabled: 'yes', all: true, loopMinutes: 99999, holdRisky: 'x', junk: 1 } });
+  assert.equal(d.alwaysAllow, false, 'always-allow is opt-in');
+  const r = await ok('setApprove', { approve: { enabled: 'yes', all: true, loopMinutes: 99999, holdRisky: 'x', alwaysAllow: 'true', junk: 1 } });
   assert.equal(r.approve.enabled, false, 'only a real true enables');
   assert.equal(r.approve.loopMinutes, 240);
   assert.equal(r.approve.holdRisky, false, 'only an explicit true turns the hold on');
+  assert.equal(r.approve.alwaysAllow, false, 'only an explicit true');
+  assert.equal((await ok('setApprove', { approve: { alwaysAllow: true } })).approve.alwaysAllow, true);
   assert.equal(r.approve.junk, undefined);
 });
 
@@ -743,9 +746,9 @@ await test('watchdog: the warning clears on approved/skipped logs or a controls 
 await test('the page cannot forge the decisions the background owns, and unknown decisions are dropped', async () => {
   await ok('setApprove', { approve: { enabled: true } });
   for (const d of ['stale', 'needs-login', 'loop-timeout', 'whatever']) await M.send({ type: 'approve:log', entry: { decision: d, title: 'forged' } }, SITE);
-  for (const d of ['confirmed', 'stuck', 'needs-input']) await M.send({ type: 'approve:log', entry: { decision: d, title: 'ok' } }, SITE);
+  for (const d of ['confirmed', 'stuck', 'needs-input', 'always-allowed']) await M.send({ type: 'approve:log', entry: { decision: d, title: 'ok' } }, SITE);
   await M.tick(120);
-  assert.deepEqual((await ok('approveLog')).log.map((e) => e.decision).sort(), ['confirmed', 'needs-input', 'stuck']);
+  assert.deepEqual((await ok('approveLog')).log.map((e) => e.decision).sort(), ['always-allowed', 'confirmed', 'needs-input', 'stuck']);
   assert.equal(M.state.badge.text === 'WARN', false);
 });
 

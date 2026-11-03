@@ -23,7 +23,7 @@ Demo data only (no real accounts).
 - **Fewer one-time codes.** Longer cookie lifetimes, captured token rotation, a logged-out guard. See
   [What this cannot do](#what-this-cannot-do) for the honest limits.
 - **Encrypted vault.** PBKDF2-SHA256 (600k) to AES-256-GCM, auto-lock, encrypted export/import.
-- **Auto-approve (opt-in).** Clicks Allow on Muse approval cards for the types you choose, loops through
+- **Auto-approve (opt-in).** Clicks Allow / Send on Muse approval cards for the types you choose, loops through
   all saved accounts, logs what it approved. See [Auto-approve](#auto-approve-museai-approval-cards).
 
 ## Install
@@ -86,7 +86,11 @@ right now** lists cookie names, flags and value *lengths* (never values) to help
 Settings → Auto-approve. **Off until you turn on the master switch.**
 
 - **Approve messages / Approve Marketplace listings / Approve everything.** A card is any block on muse.ai
-  with an Allow button next to a Deny button. "Everything" also catches card types not seen before.
+  with an Allow (or Send) button next to a Deny (or Don't send) button. "Everything" also catches card types
+  not seen before.
+- **Use "Always allow for this conversation" for messages.** Off by default, and only for message cards
+  that do not look risky. Instead of a single Send it picks that entry from the Send menu (falling back to
+  a plain Send if the menu entry cannot be found). Never used in Learn mode. Logged as `ALWAYS ALLOWED`.
 - **Hold money, deletes and credentials.** Off by default (every card is approved). Turn it on to leave
   payment, purchase, delete and password cards for you to click.
 - **Learn mode.** Logs what it would approve and clicks nothing. Use it first on a new setup.
@@ -119,7 +123,9 @@ Settings → Auto-approve. **Off until you turn on the master switch.**
 **Safety.** Auto-approving removes a human check. Text on an approval card can come from other people (for
 example a buyer's message) and could be crafted to trigger an action you would not approve. Clicks are rate
 limited, but the hold setting above is the only content guard. Muse's own "Always allow for this
-conversation" menu item is deliberately not used because it would stop Muse showing later cards at all.
+conversation" menu item is off by default and opt-in, for non-risky message cards only. Once granted, Muse
+stops showing cards for that conversation, so Switchyard cannot log, hold or rate-limit later messages
+there. Revoke grants in Muse.
 
 ## Security model
 

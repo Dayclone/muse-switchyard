@@ -39,7 +39,9 @@ All tests must pass before you open a PR. There is no build step: the repo folde
 4. Anything that touches the live browser must be crash-safe: commit the intent first, keep a rollback,
    keep the "frozen" journal flag semantics (see `doSwitch`).
 5. Auto-approve defaults must stay **off**. Do not add behaviour that approves without an explicit user
-   toggle. Do not use Muse's "Always allow for this conversation" menu item.
+   toggle. Muse's "Always allow for this conversation" menu item may only be used behind its own
+   opt-in toggle (`alwaysAllow`, off by default), only for message cards that are not risky, never in
+   Learn mode, and every grant is logged.
 6. No code, text or assets copied from other projects. Write it yourself.
 
 ## Making a change
@@ -65,6 +67,8 @@ and attaches the extension zip. Agents must not tag or release.
 
 - Muse's right pane opens on Activity; approval cards only exist while the **Approvals** tab is selected
   (`aria-pressed="true"` on `button[aria-label="Approvals"]`). The watcher switches to it first.
+- Message cards now use a split button **Send** + chevron menu and a **Don't send** button (older cards: Allow / Deny).
+  `findCards` accepts both, normalises curly apostrophes, and returns the chevron as `menu`.
 - The card's button row is a sibling of its question text; `findCards` climbs until the "...?" line is inside.
 - Card category comes from the action line, not the title: a task named "Marketplace Auto Replies" must
   not look like a listing.

@@ -106,6 +106,7 @@ else {
       if (e.target.closest && e.target.closest('#appr')) tabClicks++;
     }, true);
     if (opts.vanish) w.document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('#allow')) w.document.getElementById('card').remove(); });
+    if (opts.setup) opts.setup(w);
     w.eval(SRC);
     if (opts.timing) w.__SY_TEST__.approve.setTiming(opts.timing);
     w.__SY_TEST__.approve.setCfg(cfg);
@@ -291,6 +292,158 @@ else {
     r.A.scan(); r.A.scan();
     assert.equal(r.logs.filter((m) => m.type === 'approve:controls').length, 1, 'recovery reported once');
     assert.equal((await run('<div>x</div>', { enabled: false }, { clock: true })).logs.length, 0);
+  });
+
+  // --- New Muse cards: split Send button + chevron menu, and "Don’t send" ---
+  const NEW_MSG = `Allow Muse to send this message in Messenger for Cmp Marketplace Auto Replies?
+Muse wants to compose a Messenger message to cid.g.123. This is for the scheduled task “Cmp Marketplace Auto Replies”.
+Action
+Send Messenger message
+Conversation
+Jobanpreet · 2024 Hyundai Elantra Preferred, $21,900
+Recipient
+...
+Message
+Hi there, still available.`;
+  const NEW_RISKY = NEW_MSG.replace('Allow Muse to send this message in Messenger', 'Allow Muse to send this message about a payment in Messenger');
+  // Default chevron mirrors the real markup: a text-less <button> holding only an svg, no aria-label,
+  // wrapped one level away from Send.
+  const newCard = (text, { chevron = true, chevAttrs = '' } = {}) => {
+    const [title, ...rest] = text.split('\n');
+    return `<div id="card"><div>${title}</div><pre>${rest.join('\n')}</pre><div class="row"><div class="split">
+      <div class="s"><button id="send"><span>Send</span></button></div>${chevron ? `<div class="c"><button id="chev" ${chevAttrs}><svg viewBox="0 0 24 24" width="15" height="15"><path d="M19.38 8.38L12 15.76L4.62 8.38"></path></svg></button></div>` : ''}</div>
+      <button id="deny"><span>Don’t send</span></button></div></div>`;
+  };
+  const track = (opts = {}) => {
+    const hits = [];
+    return {
+      hits,
+      setup: (w) => w.document.addEventListener('click', (e) => {
+        const t = e.target.closest && e.target.closest('#send, #chev, #always, #once, #allow');
+        if (t) hits.push(t.id);
+        if (t && t.id === 'chev' && !opts.noMenu) {
+          w.document.body.insertAdjacentHTML('beforeend', '<div id="portal" role="menu"><div role="menuitem" id="once">Send once</div><div role="menuitem" id="always">Always  allow for this conversation</div></div>');
+        }
+      }, true)
+    };
+  };
+  const FASTMENU = { menuWaitMs: 60, menuPollMs: 10, verifyMs: 15 };
+  const NEWCFG = { enabled: true, messages: true };
+
+  await test('DOM: new Send / Don’t send card is found, chevron located; alwaysAllow off clicks Send only', async () => {
+    const t = track();
+    const r = await run(newCard(NEW_MSG), NEWCFG, { setup: t.setup, timing: FASTMENU });
+    const cards = r.A.findCards(r.w.document);
+    assert.equal(cards.length, 1);
+    assert.equal(cards[0].menu.id, 'chev');
+    assert.deepEqual(t.hits, ['send']);
+    await wait(300);
+    assert.deepEqual(r.decisions(), ['approved']);
+    assert.ok(!JSON.stringify(r.logs).includes('Jobanpreet'));
+  });
+
+  await test('DOM: chevron found by aria-haspopup alone, by adjacent text-less sibling, and absent when there is none', async () => {
+    const f = async (html) => (await run(html, { enabled: false })).A.findCards()[0];
+    assert.equal((await f(newCard(NEW_MSG, { chevAttrs: 'aria-haspopup="menu"' }))).menu.id, 'chev');
+    assert.equal((await f(newCard(NEW_MSG))).menu.id, 'chev', 'svg-only button, no aria-label, in the split group');
+    assert.equal((await f(newCard(NEW_MSG, { chevAttrs: 'aria-label="More send options" aria-haspopup="menu"' }))).menu.id, 'chev');
+    assert.equal((await f(newCard(NEW_MSG, { chevron: false }))).menu, null);
+  });
+
+  await test('DOM: the details-panel expander icon is never mistaken for the Send chevron', async () => {
+    const [title, ...rest] = NEW_MSG.split('\n');
+    const svg = '<svg viewBox="0 0 24 24" width="15" height="15"><path d="M4 15l8-8 8 8"></path></svg>';
+    const flat = (chev) => `<div id="card"><div>${title}</div><div class="details"><button id="expander" aria-expanded="true">${svg}</button><pre>${rest.join('\n')}</pre></div>` +
+      `<button id="send"><span>Send</span></button>${chev ? `<button id="chev">${svg}</button>` : ''}<button id="deny"><span>Don’t send</span></button></div>`;
+    const f = async (html) => (await run(html, { enabled: false })).A.findCards()[0];
+    assert.equal((await f(flat(true))).menu.id, 'chev', 'Send and chevron directly in the card');
+    assert.equal((await f(flat(false))).menu, null, 'no chevron: the expander must not be picked');
+    const wrapped = newCard(NEW_MSG).replace('<pre>', `<div class="details"><button id="expander" aria-expanded="true">${svg}</button></div><pre>`);
+    assert.equal((await f(wrapped)).menu.id, 'chev');
+  });
+
+  await test('DOM: alwaysAllow on: opens the menu, picks Always allow, never clicks Send, logs always-allowed', async () => {
+    const t = track();
+    const r = await run(newCard(NEW_MSG), { ...NEWCFG, alwaysAllow: true }, { setup: t.setup, timing: FASTMENU });
+    await wait(300);
+    assert.deepEqual(t.hits, ['chev', 'always']);
+    assert.deepEqual(r.decisions(), ['always-allowed']);
+    assert.ok(!JSON.stringify(r.logs).includes('Jobanpreet'));
+  });
+
+  await test('DOM: alwaysAllow on, re-scan during the async wait does not double-act', async () => {
+    const t = track();
+    const r = await run(newCard(NEW_MSG), { ...NEWCFG, alwaysAllow: true }, { setup: t.setup, timing: { ...FASTMENU, menuWaitMs: 100 } });
+    r.A.scan(); r.A.scan();
+    await wait(150);
+    assert.equal(t.hits.filter((x) => x === 'chev').length, 1);
+    assert.equal(r.decisions().filter((d) => d === 'always-allowed').length, 1);
+  });
+
+  await test('DOM: alwaysAllow on but the menu entry never appears: closes the menu and falls back to Send, logs approved', async () => {
+    const t = track({ noMenu: true });
+    const r = await run(newCard(NEW_MSG), { ...NEWCFG, alwaysAllow: true }, { setup: t.setup, timing: FASTMENU });
+    let esc = 0;
+    r.w.document.addEventListener('keydown', (e) => { if (e.key === 'Escape') esc++; });
+    await wait(120);
+    assert.deepEqual(t.hits, ['chev', 'send']);
+    assert.equal(esc, 1);
+    assert.deepEqual(r.decisions(), ['approved']);
+  });
+
+  await test('DOM: alwaysAllow on but the card looks risky: never uses the menu (plain Send, or held with holdRisky)', async () => {
+    const t = track();
+    const r = await run(newCard(NEW_RISKY), { ...NEWCFG, alwaysAllow: true }, { setup: t.setup, timing: FASTMENU });
+    await wait(300);
+    assert.deepEqual(t.hits, ['send']);
+    assert.deepEqual(r.decisions(), ['approved']);
+    const t2 = track();
+    const r2 = await run(newCard(NEW_RISKY), { ...NEWCFG, alwaysAllow: true, holdRisky: true }, { setup: t2.setup, timing: FASTMENU });
+    await wait(300);
+    assert.deepEqual(t2.hits, []);
+    assert.deepEqual(r2.decisions(), ['held']);
+  });
+
+  await test('DOM: alwaysAllow on with a listings card that has a chevron: the menu is not used', async () => {
+    const t = track();
+    const r = await run(newCard(LIST), { enabled: true, listings: true, alwaysAllow: true }, { setup: t.setup, timing: FASTMENU });
+    await wait(300);
+    assert.deepEqual(t.hits, ['send']);
+    assert.deepEqual(r.decisions(), ['approved']);
+    const t2 = track();
+    await run(newCard(ODD), { enabled: true, all: true, alwaysAllow: true }, { setup: t2.setup, timing: FASTMENU });
+    assert.deepEqual(t2.hits, ['send'], 'category other: menu not used');
+  });
+
+  await test('DOM: learn mode with alwaysAllow clicks nothing', async () => {
+    const t = track();
+    const r = await run(newCard(NEW_MSG), { ...NEWCFG, alwaysAllow: true, learn: true }, { setup: t.setup, timing: FASTMENU });
+    await wait(300);
+    assert.deepEqual(t.hits, []);
+    assert.deepEqual(r.decisions(), ['learn']);
+  });
+
+  await test('DOM: needsInput ignores the new chevron; old Allow / Deny cards still work with alwaysAllow on', async () => {
+    const t = track();
+    const popupChev = newCard(NEW_MSG, { chevAttrs: 'role="combobox" aria-label="More send options" aria-haspopup="menu"' });
+    const r = await run(popupChev, NEWCFG, { setup: t.setup, timing: FASTMENU });
+    assert.deepEqual(t.hits, ['send'], 'chevron is not treated as an empty combobox');
+    assert.equal(r.A.needsInput(r.w.document.getElementById('card')), false);
+    const old = await run(cardHtml(MSG), { enabled: true, messages: true, alwaysAllow: true }, { timing: FASTMENU });
+    await wait(300);
+    assert.equal(old.clicks(), 1, 'old card: no menu entry appears, so it falls back to Allow');
+    assert.deepEqual(old.decisions(), ['approved']);
+    const old2 = await run(cardHtml(MSG), { enabled: true, messages: true }, { timing: FASTMENU });
+    assert.equal(old2.clicks(), 1);
+    assert.deepEqual(old2.decisions(), ['approved']);
+  });
+
+  await test('sanitize: alwaysAllow defaults to false and is only true for === true', () => {
+    const A = load();
+    assert.equal(A.sanitize({}).alwaysAllow, false);
+    assert.equal(A.sanitize(undefined).alwaysAllow, false);
+    for (const v of ['true', 1, 'yes', {}]) assert.equal(A.sanitize({ alwaysAllow: v }).alwaysAllow, false);
+    assert.equal(A.sanitize({ alwaysAllow: true }).alwaysAllow, true);
   });
 
   await test('DOM: rate limit stops a runaway at maxPerMinute', async () => {

@@ -266,7 +266,7 @@ function approveSection() {
 
   // How each decision reads in the log. Unknown values (the log is stored data) fall back to a neutral style.
   const DECISIONS = {
-    approved: 'APPROVED (clicked)', retry: 'RETRY', confirmed: 'CONFIRMED (card closed)', stuck: 'STUCK (card did not close)',
+    approved: 'APPROVED (clicked)', 'always-allowed': 'ALWAYS ALLOWED (conversation)', retry: 'RETRY', confirmed: 'CONFIRMED (card closed)', stuck: 'STUCK (card did not close)',
     skipped: 'SKIPPED', held: 'HELD', learn: 'LEARN', 'rate-limited': 'RATE-LIMITED', 'needs-input': 'NEEDS INPUT (left for you)',
     stale: 'WARNING', 'needs-login': 'NEEDS RE-LOGIN', 'loop-timeout': 'LOOP TIMEOUT'
   };
@@ -287,8 +287,9 @@ function approveSection() {
     box.replaceChildren(...[
       stale ? h('div', { class: 'msg err' }, 'Warning: Muse’s page layout may have changed; auto-approve could not find its controls on an open muse.ai tab. Check that tab, or reload it. This clears itself once the controls are seen again.') : null,
       check('enabled', 'Auto-approve is on', 'Master switch. While off, nothing is clicked. Works on muse.ai tabs only.'),
-      check('all', 'Approve everything', 'Clicks Allow on any approval card, including types Switchyard has not seen before.', { disabled: off }),
+      check('all', 'Approve everything', 'Clicks Allow / Send on any approval card, including types Switchyard has not seen before.', { disabled: off }),
       check('messages', 'Approve messages', 'Cards that send a Messenger / chat message (for example your Marketplace auto-replies).', { disabled: off || a.all }),
+      check('alwaysAllow', 'Use “Always allow for this conversation” for messages', 'Off by default. When a message card is approved, picks Muse’s “Always allow for this conversation” from the Send menu instead of a single Send. Muse then sends later messages in that conversation without asking, so Switchyard never sees, logs, holds or rate-limits them. Never used for listings, other cards, or cards that look like payments, deletes or credentials.', { disabled: off || !(a.messages || a.all) }),
       check('listings', 'Approve Marketplace listings', 'Cards that publish or renew a listing.', { disabled: off || a.all }),
       check('holdRisky', 'Hold money, deletes and credentials for me', 'Off by default: every card is approved. Turn on to leave cards about payments, purchases, deleting things or passwords for you to click.', { disabled: off }),
       check('learn', 'Learn mode', 'Logs what it would approve and clicks nothing. Use it to check a new card type first.', { disabled: off }),
