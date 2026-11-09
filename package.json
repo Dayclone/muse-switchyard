@@ -14,6 +14,6 @@
     "icons": "python3 tools/make_icons.py"
   },
   "devDependencies": {
-    "jsdom": "^29.1.1"
+    "jsdom": "^31.0.0"
   }
 }
